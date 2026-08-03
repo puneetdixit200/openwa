@@ -1,0 +1,1 @@
+module.exports = { apps: [{ name: 'placement-collector', script: 'dist/index.js', cwd: __dirname, instances: 1, autorestart: true, restart_delay: 5000, max_restarts: 10, exp_backoff_restart_delay: 100, out_file: 'logs/pm2-out.log', error_file: 'logs/pm2-error.log', time: true }] };

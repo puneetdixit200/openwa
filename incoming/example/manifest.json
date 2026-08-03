@@ -1,0 +1,1 @@
+{"schemaVersion":1,"date":"example","timezone":"Asia/Kolkata","createdAt":"2026-08-04T09:32:12+05:30","updatedAt":"2026-08-04T09:32:12+05:30","messageCount":1,"attachmentCount":0,"failedAttachmentCount":0,"messageTypes":{"text":1},"firstMessageAt":"2026-08-04T09:32:10+05:30","lastMessageAt":"2026-08-04T09:32:10+05:30","files":[{"path":"messages.jsonl","sha256":"example-only"}]}

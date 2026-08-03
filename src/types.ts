@@ -1,0 +1,3 @@
+export type MessageType = 'text'|'image'|'document'|'video'|'audio'|'sticker'|'link'|'unknown';
+export type Attachment = { status:'downloaded'|'failed'|'skipped'; originalFileName:string; storedFileName?:string; relativePath?:string; mimeType?:string; sizeBytes?:number; sha256?:string; error?:string };
+export type PlacementMessage = { schemaVersion:1; messageId:string; chatIdHash:string; groupName:string|null; senderHash:string|null; senderDisplayName:string|null; timestamp:string; receivedAt:string; type:MessageType; text:string|null; caption:string|null; isForwarded:boolean; isReply:boolean; quotedMessageId:string|null; attachment:Attachment|null; parseWarnings?:string[] };
