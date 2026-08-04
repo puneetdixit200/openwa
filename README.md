@@ -1,72 +1,117 @@
 # WhatsApp Placement Collector
 
-A local Node.js 20+ / TypeScript collector for preserving messages from explicitly allowlisted WhatsApp placement groups. It uses OpenWA 4.76, stores an append-oriented filesystem archive, hashes sender and chat identifiers, downloads media with size limits, exposes only local health endpoints, and optionally syncs `incoming/` to a private Git remote.
+Local, read-only ingestion for explicitly selected WhatsApp placement groups. It uses OpenWA 4.76.0, stores `Asia/Kolkata` daily archives, hashes sender/chat identifiers, prevents duplicates, and can push raw files to a separate private Git repository.
 
-It does not classify messages, send replies, scrape full history, or expose WhatsApp automation to the network. Offline recovery depends on WhatsApp Web synchronisation and is not guaranteed.
+It does not classify jobs, extract JDs, call OpenAI, send replies, message group members, or scrape complete history. OpenWA is unofficial automation software; session expiry, WhatsApp Web changes, and messages received while the laptop is off can interrupt or limit collection.
 
-## Install
+## Privacy model
+
+Keep this public code checkout separate from raw data:
+
+```text
+~/projects/openwa/       code, .env, session, runtime, logs
+~/placement-data/        private Git checkout with incoming/YYYY-MM-DD/
+```
+
+Never use a public repository for raw placement data. Sender and chat identifiers are salted SHA-256 prefixes. Message text is preserved by default because phone numbers can be legitimate placement content; use `MESSAGE_TEXT_PRIVACY_MODE=redact-phone-numbers` for redaction. GitHub credentials belong in SSH/Git's credential manager, never in source or `.env`.
+
+## Requirements and first setup
+
+Linux, Node.js 20+, Git, Chrome/Chromium, a WhatsApp account, and a private GitHub repository for raw data. PM2 and `gh` are optional.
 
 ```bash
 git clone https://github.com/puneetdixit200/openwa.git
 cd openwa
 npm install
-cp .env.example .env
-```
-
-Edit `.env`. `HASH_SALT` and at least one exact `ALLOWED_GROUP_IDS` or `ALLOWED_GROUP_NAMES` are required. IDs take precedence; names are useful for initial discovery. Use SSH for the private remote where possible:
-
-```bash
-git remote set-url origin git@github.com:USERNAME/PRIVATE_REPOSITORY.git
-```
-
-## Run
-
-First authentication opens WhatsApp Web and prints/shows a QR code. Scan it once; `.local-session/` is reused and never committed.
-
-```bash
+npm run data-repo:init
+npm run setup
+npm run groups:select
+npm run doctor
 npm run dev
-npm run groups:list       # after authentication: masked IDs and allow status
-npm run build && npm start
 ```
 
-PM2:
+`data-repo:init` asks for an absolute data path, initializes it if necessary, creates `incoming/`, and writes both data paths into `.env`. It does not pretend to verify GitHub privacy. If `gh` is unavailable, create the private repository manually:
 
 ```bash
-npm run build
-pm2 start ecosystem.config.cjs
-pm2 save
-pm2 startup
-pm2 status
-pm2 logs placement-collector
+gh repo create placement-raw-data --private
+git -C /home/pd/placement-data remote add origin git@github.com:USERNAME/placement-raw-data.git
 ```
 
-Git sync can run internally every `GIT_SYNC_INTERVAL_MINUTES` or externally:
+`setup` checks Node, Git, Chrome, and the code checkout; creates `.env` only when absent; generates a cryptographically random 32-byte salt; and uses mode `600`. It never overwrites an existing `.env` silently.
+
+## WhatsApp authentication and groups
+
+Use `OPENWA_HEADLESS=false` for first QR authentication. Scan once; the configured session directory is reused. After authentication, `OPENWA_HEADLESS=true` may be used for background operation. Session files are never committed.
 
 ```bash
-npm run git:sync
-*/15 * * * * /absolute/path/openwa/scripts/git-sync.sh
+npm run groups:list
+npm run groups:list -- --show-full-ids   # warning and YES confirmation required
+npm run groups:select
 ```
 
-Only `incoming/` is staged. The sync uses a lock, fetches and rebases safely, never force-pushes or resets, and aborts on conflicts. Git credentials belong in SSH/Git's credential manager, never in source or `.env`.
+Selection writes exact IDs to `.env` and never sends a WhatsApp message. When `ALLOWED_GROUP_IDS` has entries, only exact IDs are accepted. Names are used only when the ID list is empty. Direct messages, own messages, notifications, and other groups are ignored.
 
 ## Configuration
 
-`TIMEZONE` controls daily folders (default `Asia/Kolkata`). `OPENWA_SESSION_ID` and `OPENWA_HEADLESS` control OpenWA. `ALLOWED_GROUP_IDS` and `ALLOWED_GROUP_NAMES` define the exact allowlist. `DATA_DIRECTORY`, `RUNTIME_DIRECTORY`, and `LOG_DIRECTORY` define local storage. `HASH_SALT` is required for salted SHA-256 privacy hashes. `DOWNLOAD_ATTACHMENTS` and `MAX_ATTACHMENT_SIZE_MB` control media. `GIT_*` controls branch, remote, author, and schedule. `HEALTH_SERVER_*` controls the loopback-only Express server. `MESSAGE_TEXT_PRIVACY_MODE=preserve` keeps placement text unchanged; `redact-phone-numbers` redacts phone-like text. `PRESERVE_DISPLAY_NAMES=false` removes display names. `EMIT_UNREAD_MESSAGES_ON_START` requests OpenWA unread emission. `LOG_LEVEL` controls Pino verbosity.
+`.env.example` documents all settings. `DATA_REPOSITORY_PATH` must be a separate Git checkout and `DATA_DIRECTORY` must be inside it. `HASH_SALT` must be at least 32 characters. `GIT_SYNC_ENABLED` is false by default; enable it only after `npm run git:check` passes. Runtime state and logs remain in the code checkout and are ignored.
 
-Health is local at `http://127.0.0.1:3100/health` and `/status`; responses exclude message contents, phone numbers, raw IDs, salt, and credentials.
+## Daily data
 
-## Data format
-
-Each accepted message is one JSON object in `incoming/YYYY-MM-DD/messages.jsonl`; group and sender identifiers are salted hashes. Attachments are stored under that day's `attachments/` directory with safe names and SHA-256 checksums. `manifest.json` summarizes counts and timestamps. Failed media remains represented in the message and is appended to `failed-downloads.jsonl`. `runtime/` contains deduplication state and locks; it is intentionally ignored by Git.
-
-## Validation and troubleshooting
-
-```bash
-npm run typecheck && npm run lint && npm test && npm run build
-npm run validate:day -- 2026-08-04
-npm run status
+```text
+<DATA_REPOSITORY_PATH>/incoming/YYYY-MM-DD/
+  messages.jsonl
+  manifest.json
+  failed-downloads.jsonl
+  attachments/
 ```
 
-Repeated QR requests usually mean an expired local session; stop the process and inspect `.local-session/` before re-authenticating. If Chrome is unavailable, install Chromium and check OpenWA's launch output. For a disconnected account, reconnect WhatsApp Web and restart the process. Attachment failures are bounded and recorded. Git failures are logged in `logs/git-sync.log`; resolve remote conflicts manually. If a manifest is damaged, preserve `messages.jsonl` and reconstruct it only through an explicit repair workflow.
+Each JSONL line is schema-validated. Raw WhatsApp message IDs are retained only for deduplication. Attachments use safe names, size limits, checksums, atomic writes, collision suffixes, and three bounded attempts. A failed download does not discard its message. `repair:manifest -- YYYY-MM-DD` backs up and rebuilds only the manifest.
 
-The collector is intentionally read-only with respect to WhatsApp. OpenWA is unofficial automation software and may break when WhatsApp Web changes.
+## Safe live test and Git operations
+
+After QR authentication, send one harmless test message from an allowed group:
+
+```bash
+TODAY=$(TZ=Asia/Kolkata date +%F)
+npm run validate:day -- "$TODAY"
+npm run status
+npm run git:check
+npm run git:status
+npm run git:sync
+```
+
+Git commands run only inside `DATA_REPOSITORY_PATH`, stage only `incoming/`, reject forbidden staged files, use a lock, rebase safely, never reset or force-push, and push only the configured branch. `git:check` performs no upload.
+
+Loopback diagnostics:
+
+```bash
+curl http://127.0.0.1:3100/health
+curl http://127.0.0.1:3100/status
+npm run doctor
+```
+
+The endpoints contain no message text, raw IDs, phone numbers, sender names, secrets, or session details.
+
+## PM2 and validation
+
+```bash
+npm run build
+npm run service:start
+pm2 save
+pm2 startup
+npm run service:status
+npm run service:logs
+```
+
+Available checks:
+
+```bash
+npm run format:check
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run validate:data
+```
+
+If QR authentication repeats, stop the process and inspect the session directory; it is not deleted automatically. If Chrome is missing, install Chromium/Chrome. For Git problems, run `npm run git:check` and inspect the private checkout's remote, branch, and SSH authentication. Back up the private data repository independently. Do not claim the collector is live until the user has scanned the QR code and observed one real test message.

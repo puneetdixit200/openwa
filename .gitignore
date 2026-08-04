@@ -16,8 +16,6 @@ tmp/
 .cache/
 .DS_Store
 incoming/*
-!incoming/example/
-!incoming/example/**
 
 # managed by open-wa
 **.data.json

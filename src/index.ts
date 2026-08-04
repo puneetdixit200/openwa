@@ -1,6 +1,99 @@
-import fs from 'node:fs/promises'; import path from 'node:path'; import pino from 'pino'; import {loadConfig} from './config.js'; import {createOpenWa,allowedMessage,normalise} from './openwa.js'; import {StateStore,writeMessage,dateFolder} from './storage.js'; import {saveAttachment} from './attachment.js'; import {ensureDirs} from './utils.js'; import {startServer,type RuntimeStatus} from './server.js'; import {syncGit} from './git.js';
-const cfg=loadConfig(); await ensureDirs(cfg.dataDir,cfg.runtimeDir,cfg.logDir,path.join(cfg.runtimeDir,'locks')); const log=pino({level:cfg.logLevel}); const state=new StateStore(cfg); await state.load(); const status:RuntimeStatus={whatsappConnected:false,listenerActive:false,lastMessageReceivedAt:null,lastGitSyncAt:null,lastGitSyncStatus:'never',startedAt:Date.now(),activeGroupCount:cfg.groupIds.length||cfg.groupNames.length,lastSafeError:null}; let client:any; let server:any;
-async function save(raw:any){if(!allowedMessage(raw,cfg)){log.debug('ignored non-allowlisted message');return;}if(raw.fromMe||raw.isSentByMe||raw.isNotification)return;const msg=normalise(raw,cfg);if(state.has(msg.messageId)){log.debug({messageId:msg.messageId.slice(0,8)},'duplicate skipped');return;}const folder=await dateFolder(cfg,new Date(msg.timestamp));msg.attachment=await saveAttachment(cfg,client,raw,folder);await writeMessage(cfg,msg,new Date(msg.timestamp));await state.add(msg.messageId);status.lastMessageReceivedAt=msg.receivedAt;log.info({messageId:msg.messageId.slice(0,8),type:msg.type},'message saved');}
-async function run(){client=await createOpenWa(cfg);status.whatsappConnected=true;await client.onMessage(save);status.listenerActive=true;log.info('WhatsApp listener active');if(cfg.emitUnread&&client.emitUnreadMessages)await client.emitUnreadMessages();if(cfg.healthEnabled)server=startServer(cfg,status);if(cfg.gitSyncEnabled)setInterval(async()=>{try{const r=await syncGit(cfg);status.lastGitSyncAt=new Date().toISOString();status.lastGitSyncStatus=r.status;log.info(r,'git sync complete');}catch(e){status.lastGitSyncStatus='error';status.lastSafeError=(e as Error).message;log.error({err:e},'git sync failed');}},cfg.gitIntervalMinutes*60_000);}
-async function command(){const arg=process.argv[2];if(arg==='--git-sync'){console.log(await syncGit(cfg));return;}if(arg==='--status'){console.log(JSON.stringify({dataDir:cfg.dataDir,healthPort:cfg.healthPort,allowedGroupCount:cfg.groupIds.length+cfg.groupNames.length},null,2));return;}if(arg==='--validate-day'){const day=process.argv[3];if(!day)throw new Error('usage: npm run validate:day -- YYYY-MM-DD');const lines=(await fs.readFile(path.join(cfg.dataDir,day,'messages.jsonl'),'utf8')).trim().split('\n').filter(Boolean);const ids=new Set(lines.map(x=>JSON.parse(x).messageId));if(ids.size!==lines.length)throw new Error('duplicate message IDs');console.log(`valid: ${day} (${lines.length} messages)`);return;}if(arg==='--validate-data'){console.log('Use --validate-day YYYY-MM-DD for a daily archive');return;}if(arg==='--repair-manifest')throw new Error('repair is intentionally explicit; preserve messages.jsonl');if(arg==='--list-groups'){client=await createOpenWa(cfg);for(const c of (await client.getAllChats?.()??[]).filter((x:any)=>x.isGroup))console.log(`${c.name??'(unnamed)'} | ${String(c.id??'').replace(/^(.{4}).*(.{4})$/,'$1…$2')} | ${cfg.groupIds.includes(c.id)||cfg.groupNames.includes(c.name)?'allowed':'ignored'}`);await client.close?.();return;}await run();}
-async function shutdown(code=0){status.listenerActive=false;server?.close();await client?.close?.().catch(()=>{});process.exit(code);}process.on('SIGINT',()=>void shutdown());process.on('SIGTERM',()=>void shutdown());process.on('uncaughtException',e=>{log.fatal({err:e},'uncaught exception');void shutdown(1)});process.on('unhandledRejection',e=>{log.fatal({err:e},'unhandled rejection');void shutdown(1)});await command();
+import path from 'node:path';
+import pino from 'pino';
+import { loadConfig, prepareLocalDirectories } from './config.js';
+import {
+  createOpenWa,
+  allowedMessage,
+  shouldIgnoreMessage,
+  normalise,
+  type IncomingMessage,
+  type OpenWaClient,
+} from './openwa.js';
+import { StateStore, writeMessage, dateFolder } from './storage.js';
+import { saveAttachment } from './attachment.js';
+import { startServer, type RuntimeStatus } from './server.js';
+import { syncGit } from './git.js';
+export async function startCollector() {
+  const cfg = loadConfig();
+  await prepareLocalDirectories(cfg);
+  const log = pino({ level: cfg.logLevel });
+  const state = new StateStore(cfg);
+  await state.load();
+  const status: RuntimeStatus = {
+    whatsappConnected: false,
+    listenerActive: false,
+    lastMessageReceivedAt: null,
+    lastGitSyncAt: null,
+    lastGitSyncStatus: 'never',
+    startedAt: Date.now(),
+    activeGroupCount: cfg.groupIds.length || cfg.groupNames.length,
+    lastSafeError: null,
+  };
+  let client: OpenWaClient | undefined;
+  let server: ReturnType<typeof startServer> | undefined;
+  const save = async (raw: IncomingMessage) => {
+    if (!allowedMessage(raw, cfg) || shouldIgnoreMessage(raw)) {
+      log.debug('ignored message outside the configured read-only allowlist');
+      return;
+    }
+    const msg = normalise(raw, cfg);
+    if (state.has(msg.messageId)) {
+      log.debug({ messageId: msg.messageId.slice(0, 8) }, 'duplicate skipped');
+      return;
+    }
+    const receivedDate = new Date(msg.timestamp);
+    const folder = await dateFolder(cfg, receivedDate);
+    msg.attachment = await saveAttachment(cfg, client ?? {}, raw, folder);
+    await writeMessage(cfg, msg, receivedDate);
+    await state.add(msg.messageId);
+    status.lastMessageReceivedAt = msg.receivedAt;
+    log.info({ messageId: msg.messageId.slice(0, 8), type: msg.type }, 'message saved');
+  };
+  try {
+    client = await createOpenWa(cfg);
+    status.whatsappConnected = true;
+    await client.onMessage(save);
+    status.listenerActive = true;
+    log.info('WhatsApp listener active');
+    if (cfg.emitUnread && client.emitUnreadMessages) await client.emitUnreadMessages();
+    if (cfg.healthEnabled) server = startServer(cfg, status);
+    if (cfg.gitSyncEnabled)
+      setInterval(async () => {
+        try {
+          const result = await syncGit(cfg);
+          status.lastGitSyncAt = new Date().toISOString();
+          status.lastGitSyncStatus = result.status;
+          log.info(result, 'git sync complete');
+        } catch (error) {
+          status.lastGitSyncAt = new Date().toISOString();
+          status.lastGitSyncStatus = 'error';
+          status.lastSafeError = (error as Error).message;
+          log.error({ err: error }, 'git sync failed');
+        }
+      }, cfg.gitIntervalMinutes * 60_000);
+  } catch (error) {
+    status.lastSafeError = (error as Error).message;
+    log.error({ err: error }, 'collector failed to start');
+    await server?.close();
+    await client?.close?.().catch(() => {});
+    throw error;
+  }
+  const shutdown = async (code = 0) => {
+    status.listenerActive = false;
+    server?.close();
+    await client?.close?.().catch(() => {});
+    process.exit(code);
+  };
+  process.once('SIGINT', () => void shutdown());
+  process.once('SIGTERM', () => void shutdown());
+  process.once('uncaughtException', (error) => {
+    log.fatal({ err: error }, 'uncaught exception');
+    void shutdown(1);
+  });
+  process.once('unhandledRejection', (error) => {
+    log.fatal({ err: error }, 'unhandled rejection');
+    void shutdown(1);
+  });
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname))
+  await startCollector();
