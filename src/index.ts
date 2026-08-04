@@ -52,7 +52,14 @@ export async function startCollector() {
   try {
     client = await createOpenWa(cfg);
     status.whatsappConnected = true;
-    await client.onMessage(save);
+    await client.onMessage(async (raw) => {
+      try {
+        await save(raw);
+      } catch (error) {
+        status.lastSafeError = (error as Error).message;
+        log.error({ err: error }, 'message processing failed');
+      }
+    });
     status.listenerActive = true;
     log.info('WhatsApp listener active');
     if (cfg.emitUnread && client.emitUnreadMessages) await client.emitUnreadMessages();

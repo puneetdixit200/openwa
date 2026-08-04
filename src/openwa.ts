@@ -28,6 +28,7 @@ export type IncomingMessage = {
 export type GroupSummary = { id: string; name: string; isGroup?: boolean };
 export type OpenWaClient = {
   onMessage: (cb: (m: IncomingMessage) => Promise<void>) => Promise<void> | void;
+  getAllGroups?: (includeComms?: boolean) => Promise<GroupSummary[]>;
   getAllChats?: () => Promise<GroupSummary[]>;
   emitUnreadMessages?: () => Promise<unknown>;
   decryptMedia?: (message: unknown) => Promise<string>;
@@ -61,6 +62,20 @@ export function normalise(m: IncomingMessage, cfg: Config): PlacementMessage {
   const group = groupNameOf(m);
   if (!group) warnings.push('Missing group name');
   const rawText = typeof m.body === 'string' ? m.body : typeof m.text === 'string' ? m.text : null;
+  const rawType = String(m.type ?? (m.isMedia ? 'document' : 'text'));
+  const typeMap: Record<string, MessageType> = {
+    chat: 'text',
+    text: 'text',
+    image: 'image',
+    document: 'document',
+    video: 'video',
+    audio: 'audio',
+    ptt: 'audio',
+    sticker: 'sticker',
+    link: 'link',
+  };
+  const type = typeMap[rawType] ?? 'unknown';
+  if (!typeMap[rawType]) warnings.push(`Unsupported WhatsApp message type: ${rawType}`);
   return {
     schemaVersion: 1,
     messageId: id,
@@ -72,7 +87,7 @@ export function normalise(m: IncomingMessage, cfg: Config): PlacementMessage {
       : null,
     timestamp: new Date(Number(m.timestamp ?? Date.now()) * (Number(m.timestamp) < 1e12 ? 1000 : 1)).toISOString(),
     receivedAt: new Date().toISOString(),
-    type: (m.type ?? (m.isMedia ? 'document' : 'text')) as MessageType,
+    type,
     text: cfg.textPrivacy === 'redact-phone-numbers' ? redactPhoneNumbers(rawText) : rawText,
     caption: m.caption ?? null,
     isForwarded: Boolean(m.isForwarded),
@@ -89,9 +104,17 @@ export async function createOpenWa(cfg: Config): Promise<OpenWaClient> {
     headless: cfg.headless,
     cacheEnabled: true,
     sessionDataPath: cfg.sessionDirectory,
-    useChrome: true,
-    qrTimeout: 0,
-    authTimeout: 0,
+    useChrome: false,
+    qrTimeout: cfg.qrTimeout,
+    authTimeout: cfg.authTimeout,
+    // OpenWA 4.76.0 only forwards customUserAgent through its inDocker path.
+    // Enable that path only when an explicit compatible UA is configured.
+    ...(cfg.customUserAgent ? { inDocker: true, customUserAgent: cfg.customUserAgent } : {}),
+    ...(cfg.browserPath
+      ? {
+          executablePath: cfg.browserPath,
+        }
+      : {}),
   });
   return client as unknown as OpenWaClient;
 }

@@ -4,9 +4,14 @@ async function main() {
   const cfg = await configForCommand();
   const client = await createOpenWa(cfg);
   try {
-    const groups = ((await client.getAllChats?.()) ?? []).filter(
-      (group: GroupSummary) => group.isGroup !== false && group.id.endsWith('@g.us'),
-    );
+    const groups = client.getAllGroups
+      ? await client.getAllGroups(false)
+      : ((await client.getAllChats?.()) ?? []).filter(
+          (group: GroupSummary) => group.isGroup !== false && group.id.endsWith('@g.us'),
+        );
+    if (!groups.length) {
+      throw new Error('no WhatsApp groups found; confirm the account is connected and try again');
+    }
     groups.forEach((group, index) => console.log(`${index + 1}. ${group.name || '(unnamed)'}`));
     const rl = prompt();
     const answer = await rl.question('Select group numbers separated by commas: ');

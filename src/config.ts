@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -19,6 +20,20 @@ const schema = z.object({
   TIMEZONE: z.string().default('Asia/Kolkata'),
   OPENWA_SESSION_ID: z.string().default('placement-listener'),
   OPENWA_HEADLESS: bool.default(false),
+  OPENWA_QR_TIMEOUT: z.coerce.number().int().nonnegative().default(0),
+  OPENWA_AUTH_TIMEOUT: z.coerce.number().int().nonnegative().default(0),
+  OPENWA_BROWSER_PATH: z
+    .string()
+    .default('')
+    .refine((value) => !value || existsSync(value), {
+      message: 'OPENWA_BROWSER_PATH does not exist; remove it to use bundled Chromium or set the exact executable path',
+    }),
+  OPENWA_CUSTOM_USER_AGENT: z
+    .string()
+    .default('')
+    .refine((value) => !value || value.length >= 20, {
+      message: 'OPENWA_CUSTOM_USER_AGENT must be at least 20 characters when configured',
+    }),
   OPENWA_SESSION_DIRECTORY: z.string().default('./.local-session'),
   ALLOWED_GROUP_IDS: list.default([]),
   ALLOWED_GROUP_NAMES: list.default([]),
@@ -48,6 +63,10 @@ export type Config = {
   timezone: string;
   sessionId: string;
   headless: boolean;
+  qrTimeout: number;
+  authTimeout: number;
+  browserPath?: string;
+  customUserAgent?: string;
   sessionDirectory: string;
   groupIds: string[];
   groupNames: string[];
@@ -98,6 +117,10 @@ export function loadConfig(cwd = process.cwd(), requireGroups = true): Config {
     timezone: v.TIMEZONE,
     sessionId: v.OPENWA_SESSION_ID,
     headless: v.OPENWA_HEADLESS,
+    qrTimeout: v.OPENWA_QR_TIMEOUT,
+    authTimeout: v.OPENWA_AUTH_TIMEOUT,
+    browserPath: v.OPENWA_BROWSER_PATH,
+    customUserAgent: v.OPENWA_CUSTOM_USER_AGENT,
     sessionDirectory: path.resolve(cwd, v.OPENWA_SESSION_DIRECTORY),
     groupIds: v.ALLOWED_GROUP_IDS,
     groupNames: v.ALLOWED_GROUP_NAMES,

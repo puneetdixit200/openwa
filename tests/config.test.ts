@@ -13,6 +13,10 @@ const valid = {
   DATA_REPOSITORY_PATH: '/tmp/openwa-data',
   DATA_DIRECTORY: '/tmp/openwa-data/incoming',
   GIT_SYNC_ENABLED: 'false',
+  OPENWA_BROWSER_PATH: '/usr/bin/chromium',
+  OPENWA_CUSTOM_USER_AGENT: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/151.0.0.0 Safari/537.36',
+  OPENWA_QR_TIMEOUT: '0',
+  OPENWA_AUTH_TIMEOUT: '0',
 };
 describe('configuration safety', () => {
   it('rejects a short salt', () => {
