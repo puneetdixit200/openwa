@@ -47,7 +47,7 @@ const schema = z.object({
   GIT_SYNC_ENABLED: bool.default(false),
   GIT_REMOTE: z.string().default('origin'),
   GIT_BRANCH: z.string().default('main'),
-  GIT_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+  GIT_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
   GIT_COMMIT_AUTHOR_NAME: z.string().default('Placement Collector'),
   GIT_COMMIT_AUTHOR_EMAIL: z.string().email().default('collector@example.com'),
   HEALTH_SERVER_ENABLED: bool.default(true),
