@@ -32,6 +32,11 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  report(
+    'Group allowlist',
+    cfg.groupIds.length > 0 || cfg.groupNames.length > 0,
+    cfg.groupIds.length > 0 ? 'exact group IDs configured' : 'select a group before starting collection',
+  );
   for (const [name, file] of [
     ['session directory', cfg.sessionDirectory],
     ['runtime directory', cfg.runtimeDir],
