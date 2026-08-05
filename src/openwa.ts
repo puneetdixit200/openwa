@@ -117,6 +117,8 @@ export async function createOpenWa(cfg: Config, options: OpenWaLaunchOptions = {
     headless: interactive ? false : cfg.headless,
     cacheEnabled: true,
     sessionDataPath: cfg.sessionDirectory,
+    // Never let OpenWA remove the locally preserved session after logout.
+    deleteSessionDataOnLogout: false,
     useChrome: false,
     qrTimeout: backgroundExistingSession ? 1 : cfg.qrTimeout,
     authTimeout: backgroundExistingSession ? 1 : cfg.authTimeout,
