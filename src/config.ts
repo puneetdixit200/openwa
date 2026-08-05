@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -35,6 +35,12 @@ const schema = z.object({
       message: 'OPENWA_CUSTOM_USER_AGENT must be at least 20 characters when configured',
     }),
   OPENWA_SESSION_DIRECTORY: z.string().default('./.local-session'),
+  OPENWA_AUTO_RECONNECT: bool.default(true),
+  OPENWA_RECONNECT_INITIAL_SECONDS: z.coerce.number().int().positive().default(30),
+  OPENWA_RECONNECT_MAX_SECONDS: z.coerce.number().int().positive().default(900),
+  OPENWA_RECONNECT_MULTIPLIER: z.coerce.number().gt(1).max(10).default(2),
+  OPENWA_RECONNECT_JITTER_SECONDS: z.coerce.number().int().nonnegative().default(10),
+  OPENWA_BACKGROUND_AUTH_MODE: z.enum(['existing-session-only', 'interactive']).default('existing-session-only'),
   ALLOWED_GROUP_IDS: list.default([]),
   ALLOWED_GROUP_NAMES: list.default([]),
   DATA_REPOSITORY_PATH: z.string().default('./placement-data'),
@@ -45,6 +51,7 @@ const schema = z.object({
   DOWNLOAD_ATTACHMENTS: bool.default(true),
   MAX_ATTACHMENT_SIZE_MB: z.coerce.number().int().positive().max(1024).default(25),
   GIT_SYNC_ENABLED: bool.default(false),
+  LOCAL_ONLY_MODE: bool.default(true),
   GIT_REMOTE: z.string().default('origin'),
   GIT_BRANCH: z.string().default('main'),
   GIT_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(360),
@@ -91,6 +98,13 @@ export type Config = {
   textPrivacy: 'preserve' | 'redact-phone-numbers';
   preserveDisplayNames: boolean;
   logLevel: string;
+  autoReconnect: boolean;
+  reconnectInitialSeconds: number;
+  reconnectMaxSeconds: number;
+  reconnectMultiplier: number;
+  reconnectJitterSeconds: number;
+  backgroundAuthMode: 'existing-session-only' | 'interactive';
+  localOnlyMode: boolean;
 };
 export function loadConfig(cwd = process.cwd(), requireGroups = true): Config {
   const v = schema.parse(process.env);
@@ -145,7 +159,49 @@ export function loadConfig(cwd = process.cwd(), requireGroups = true): Config {
     textPrivacy: v.MESSAGE_TEXT_PRIVACY_MODE,
     preserveDisplayNames: v.PRESERVE_DISPLAY_NAMES,
     logLevel: v.LOG_LEVEL,
+    autoReconnect: v.OPENWA_AUTO_RECONNECT,
+    reconnectInitialSeconds: v.OPENWA_RECONNECT_INITIAL_SECONDS,
+    reconnectMaxSeconds: v.OPENWA_RECONNECT_MAX_SECONDS,
+    reconnectMultiplier: v.OPENWA_RECONNECT_MULTIPLIER,
+    reconnectJitterSeconds: v.OPENWA_RECONNECT_JITTER_SECONDS,
+    backgroundAuthMode: v.OPENWA_BACKGROUND_AUTH_MODE,
+    localOnlyMode: v.LOCAL_ONLY_MODE,
   };
+}
+
+export function assertConfiguredBrowserExecutable(cfg: Config) {
+  if (!cfg.browserPath) return;
+  try {
+    accessSync(cfg.browserPath, constants.X_OK);
+  } catch {
+    throw new Error(`OPENWA_BROWSER_PATH is not executable: ${cfg.browserPath}`);
+  }
+}
+
+export async function checkLocalPreflight(cfg: Config) {
+  const directories = [
+    ['code repository', cfg.codeRepoPath],
+    ['session directory', cfg.sessionDirectory],
+    ['runtime directory', cfg.runtimeDir],
+    ['log directory', cfg.logDir],
+    ['data directory', cfg.dataDir],
+  ] as const;
+  const failures: string[] = [];
+  for (const [name, directory] of directories) {
+    try {
+      await fs.access(directory, constants.R_OK | constants.W_OK);
+    } catch {
+      failures.push(
+        `${name} is not readable and writable: ${directory}. Suggested fix: sudo chown -R "$USER:$USER" ${directory}`,
+      );
+    }
+  }
+  try {
+    assertConfiguredBrowserExecutable(cfg);
+  } catch (error) {
+    failures.push((error as Error).message);
+  }
+  if (failures.length) throw new Error(failures.join('; '));
 }
 export async function prepareLocalDirectories(cfg: Config) {
   await Promise.all([

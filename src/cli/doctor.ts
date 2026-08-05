@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { configForCommand, commandExists } from './common.js';
+import { checkLocalPreflight } from '../config.js';
 import { gitCheck } from '../git.js';
 import { countToday } from '../storage.js';
 const exec = promisify(execFile);
@@ -51,7 +52,18 @@ async function main() {
       report(name, false, (error as Error).message);
     }
   }
+  try {
+    await checkLocalPreflight(cfg);
+    report('Local preflight', true, 'directories and configured browser are usable');
+  } catch (error) {
+    report('Local preflight', false, (error as Error).message);
+  }
   if (cfg.gitSyncEnabled) {
+    if (cfg.localOnlyMode)
+      warn(
+        'Git sync',
+        'LOCAL_ONLY_MODE=true; automatic Git sync is disabled, manual npm run git:sync remains available',
+      );
     try {
       const result = await gitCheck(cfg);
       report('Data Git repository', true, `${result.branch} ${result.remoteUrl}`);
@@ -68,6 +80,25 @@ async function main() {
       report('Data Git repository', false, (error as Error).message);
     }
   }
+  if (await commandExists('systemctl')) {
+    try {
+      const unit = (
+        await exec('systemctl', [
+          '--user',
+          'show',
+          'placement-collector.service',
+          '--property=ExecStart,WorkingDirectory,EnvironmentFiles',
+        ])
+      ).stdout;
+      report(
+        'systemd unit',
+        unit.includes(cfg.codeRepoPath),
+        unit.includes(cfg.codeRepoPath) ? 'matches this repository' : 'does not match this repository',
+      );
+    } catch {
+      warn('systemd unit', 'not installed or user systemd is unavailable');
+    }
+  }
   if (await commandExists('pm2')) report('PM2', true, 'available');
   else warn('PM2', 'not installed; development mode remains available');
   console.log(`Messages today: ${await countToday(cfg)}`);
@@ -78,6 +109,13 @@ async function main() {
       else warn('Health endpoint', `${response.status}`);
     } catch {
       console.log('! Health endpoint: collector is not running');
+    }
+    try {
+      const response = await fetch(`http://${cfg.healthHost}:${cfg.healthPort}/ready`);
+      if (response.ok) report('Ready endpoint', true, `${response.status}`);
+      else warn('Ready endpoint', `${response.status} (WhatsApp is not connected)`);
+    } catch {
+      warn('Ready endpoint', 'collector is not running');
     }
   }
   if (failed) process.exitCode = 1;

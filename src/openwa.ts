@@ -33,6 +33,8 @@ export type OpenWaClient = {
   emitUnreadMessages?: () => Promise<unknown>;
   decryptMedia?: (message: unknown) => Promise<string>;
   close?: () => Promise<void>;
+  isConnected?: () => Promise<boolean> | boolean;
+  onStateChanged?: (cb: (state: string) => void) => Promise<void> | void;
 };
 export function chatIdOf(m: IncomingMessage) {
   return String(m.chatId ?? m.chat?.id ?? m.from ?? '');
@@ -97,16 +99,28 @@ export function normalise(m: IncomingMessage, cfg: Config): PlacementMessage {
     parseWarnings: warnings,
   };
 }
-export async function createOpenWa(cfg: Config): Promise<OpenWaClient> {
+export type OpenWaLaunchOptions = { interactive?: boolean };
+
+export function isAuthRequiredError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /logged\s*out|not\s+authenticated|authentication\s+required|session\s+(?:expired|invalid|not\s+found)|unpaired|needs?\s+(?:qr|scan)|qr\s+code/i.test(
+    message,
+  );
+}
+
+export async function createOpenWa(cfg: Config, options: OpenWaLaunchOptions = {}): Promise<OpenWaClient> {
   const mod = await import('@open-wa/wa-automate');
+  const interactive = options.interactive === true;
+  const backgroundExistingSession = !interactive && cfg.backgroundAuthMode === 'existing-session-only';
   const client = await mod.create({
     sessionId: cfg.sessionId,
-    headless: cfg.headless,
+    headless: interactive ? false : cfg.headless,
     cacheEnabled: true,
     sessionDataPath: cfg.sessionDirectory,
     useChrome: false,
-    qrTimeout: cfg.qrTimeout,
-    authTimeout: cfg.authTimeout,
+    qrTimeout: backgroundExistingSession ? 1 : cfg.qrTimeout,
+    authTimeout: backgroundExistingSession ? 1 : cfg.authTimeout,
+    ...(backgroundExistingSession ? { throwOnExpiredSessionData: true, killProcessOnTimeout: false } : {}),
     // OpenWA 4.76.0 only forwards customUserAgent through its inDocker path.
     // Enable that path only when an explicit compatible UA is configured.
     ...(cfg.customUserAgent ? { inDocker: true, customUserAgent: cfg.customUserAgent } : {}),

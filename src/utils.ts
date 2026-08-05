@@ -29,6 +29,11 @@ export function sha256(data: Buffer | string) {
 export function saltedHash(salt: string, value: string) {
   return sha256(`${salt}:${value}`).slice(0, 16);
 }
+export function safeErrorMessage(error: unknown) {
+  return String(error instanceof Error ? error.message : error)
+    .replace(/https?:\/\/[^\s/]+@/gi, 'https://[redacted]@')
+    .replace(/\b\d{7,}\b/g, '[redacted]');
+}
 export function redactPhoneNumbers(value: string | null) {
   return value?.replace(/(?<!\d)(?:\+?\d[\d\s().-]{7,}\d)(?!\d)/g, '[phone redacted]') ?? null;
 }

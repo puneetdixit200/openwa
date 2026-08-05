@@ -80,3 +80,12 @@ export async function gitStatus(cfg: Config) {
   const porcelain = await runGit(cfg.dataRepoPath, ['status', '--short']);
   return { repo: cfg.dataRepoPath, changes: porcelain ? porcelain.split('\n') : [] };
 }
+
+export async function pendingGitFileCount(cfg: Config) {
+  try {
+    const status = await runGit(cfg.dataRepoPath, ['status', '--short', '--', 'incoming/']);
+    return status ? status.split('\n').filter(Boolean).length : 0;
+  } catch {
+    return 0;
+  }
+}

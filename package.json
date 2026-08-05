@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "setup": "tsx src/cli/setup.ts",
+    "auth": "tsx src/cli/auth.ts",
     "doctor": "tsx src/cli/doctor.ts",
     "groups:list": "tsx src/cli/groups-list.ts",
     "groups:select": "tsx src/cli/groups-select.ts",
@@ -30,7 +31,14 @@
     "service:stop": "pm2 stop placement-collector",
     "service:restart": "pm2 restart placement-collector",
     "service:status": "pm2 status",
-    "service:logs": "pm2 logs placement-collector"
+    "service:logs": "pm2 logs placement-collector",
+    "systemd:install": "bash scripts/install-systemd.sh",
+    "systemd:uninstall": "bash scripts/uninstall-systemd.sh",
+    "systemd:start": "systemctl --user start placement-collector",
+    "systemd:stop": "systemctl --user stop placement-collector",
+    "systemd:restart": "systemctl --user restart placement-collector",
+    "systemd:status": "systemctl --user status placement-collector --no-pager",
+    "systemd:logs": "journalctl --user -u placement-collector -f"
   },
   "dependencies": {
     "@open-wa/wa-automate": "4.76.0",

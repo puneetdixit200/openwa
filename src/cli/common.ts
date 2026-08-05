@@ -3,6 +3,9 @@ import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { loadConfig } from '../config.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const exec = promisify(execFile);
 export const prompt = () => createInterface({ input, output });
 export async function setEnvValues(values: Record<string, string>) {
   const file = path.join(process.cwd(), '.env');
@@ -27,6 +30,17 @@ export async function setEnvValues(values: Record<string, string>) {
 }
 export async function configForCommand() {
   return loadConfig(process.cwd(), false);
+}
+
+export async function assertBackgroundCollectorStopped() {
+  try {
+    const result = await exec('systemctl', ['--user', 'is-active', 'placement-collector.service']);
+    if (result.stdout.trim() === 'active')
+      throw new Error('background collector is active; stop it first: systemctl --user stop placement-collector');
+  } catch (error) {
+    const message = (error as Error).message;
+    if (message.includes('background collector is active')) throw error;
+  }
 }
 export async function gitAvailable() {
   try {

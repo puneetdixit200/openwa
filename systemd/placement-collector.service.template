@@ -1,0 +1,17 @@
+[Unit]
+Description=Local WhatsApp Placement Collector
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory={{REPOSITORY_PATH}}
+EnvironmentFile={{REPOSITORY_PATH}}/.env
+ExecStart={{NODE_PATH}} {{REPOSITORY_PATH}}/dist/src/index.js
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=30
+KillSignal=SIGTERM
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target

@@ -34,4 +34,12 @@ describe('configuration safety', () => {
     expect(() => loadConfig('/tmp/openwa-code', false)).toThrow(/inside/);
     setEnv(original);
   });
+  it('accepts reconnect and local-only settings', () => {
+    setEnv({ ...valid, LOCAL_ONLY_MODE: 'true', GIT_SYNC_ENABLED: 'true', OPENWA_AUTO_RECONNECT: 'true' });
+    const cfg = loadConfig('/tmp/openwa-code', false);
+    expect(cfg.localOnlyMode).toBe(true);
+    expect(cfg.gitSyncEnabled).toBe(true);
+    expect(cfg.reconnectInitialSeconds).toBe(30);
+    setEnv(original);
+  });
 });

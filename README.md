@@ -1,109 +1,117 @@
 # WhatsApp Placement Collector
 
-Local, read-only ingestion for explicitly selected WhatsApp placement groups. It uses OpenWA 4.76.0, stores `Asia/Kolkata` daily archives, hashes sender/chat identifiers, prevents duplicates, and can push raw files to a separate private Git repository.
+This project is a local-first, read-only ingestion layer for selected WhatsApp placement groups. It stores new text messages and supported attachments in date-based folders using `Asia/Kolkata`, hashes chat and sender identifiers, deduplicates messages, and optionally syncs the private raw archive to a separate Git repository.
 
-It does not classify jobs, extract JDs, call OpenAI, send replies, message group members, or scrape complete history. OpenWA is unofficial automation software; session expiry, WhatsApp Web changes, and messages received while the laptop is off can interrupt or limit collection.
+It never sends, replies to, reacts to, forwards, edits, or deletes WhatsApp messages. It does not classify companies, extract job descriptions, generate websites, or call OpenAI.
 
 ## Privacy model
 
-Keep this public code checkout separate from raw data:
+Keep the code repository separate from the private raw-data repository. Never use a public repository for raw placement data. `.env`, `.local-session/`, runtime state, logs, and raw data are ignored by the code repository. The collector never logs phone numbers, raw WhatsApp IDs, QR data, message contents, tokens, or session payloads.
 
-```text
-~/projects/openwa/       code, .env, session, runtime, logs
-~/placement-data/        private Git checkout with incoming/YYYY-MM-DD/
-```
+WhatsApp needs an internet connection to deliver messages. Local storage continues to work without GitHub. GitHub sync is optional and can be performed later. Unread replay is best effort; messages received while the laptop was fully offline are not guaranteed to be recoverable.
 
-Never use a public repository for raw placement data. Sender and chat identifiers are salted SHA-256 prefixes. Message text is preserved by default because phone numbers can be legitimate placement content; use `MESSAGE_TEXT_PRIVACY_MODE=redact-phone-numbers` for redaction. GitHub credentials belong in SSH/Git's credential manager, never in source or `.env`.
+## Requirements
 
-## Requirements and first setup
+Linux, Node.js 20+, Git, and the configured Chrome for Testing/Chromium executable. A graphical desktop session is required for `npm run auth`. Use a private raw-data Git repository if manual sync is enabled.
 
-Linux, Node.js 20+, Git, Chrome/Chromium, a WhatsApp account, and a private GitHub repository for raw data. PM2 and `gh` are optional.
+## Installation
 
 ```bash
 git clone https://github.com/puneetdixit200/openwa.git
 cd openwa
 npm install
-npm run data-repo:init
-npm run setup
+```
+
+Create `.env` from `.env.example` with `npm run setup`, or use the existing local configuration. Never commit `.env`.
+
+## First authentication and group selection
+
+The background service must not own the session during interactive commands:
+
+```bash
+systemctl --user stop placement-collector
+cd /home/pd/openwa
+npm run auth
 npm run groups:select
+```
+
+`npm run auth` opens a visible browser only for interactive authentication. Scan the QR locally when WhatsApp asks for it. The command does not send messages or select groups. `groups:select` uses `getAllGroups(false)`, prints names only, accepts comma-separated indexes, asks for confirmation, and stores exact IDs without displaying them. For example, select `1,2` at the prompt.
+
+The collector uses `OPENWA_BACKGROUND_AUTH_MODE=existing-session-only` and `OPENWA_HEADLESS=true` in the background. If authentication expires, it reports `auth_required` and tells you to run `npm run auth`; it does not repeatedly open visible browsers or delete the session.
+
+## Local-only operation
+
+Recommended first-run settings:
+
+```env
+LOCAL_ONLY_MODE=true
+GIT_SYNC_ENABLED=false
+OPENWA_AUTO_RECONNECT=true
+OPENWA_BACKGROUND_AUTH_MODE=existing-session-only
+```
+
+With local-only mode, messages and attachments are written to the private local data repository first. Automatic Git fetch, pull, commit, and push are disabled. `npm run git:sync` remains available as an explicit manual operation later. Git errors cannot stop WhatsApp collection.
+
+## Verification and operation
+
+```bash
 npm run doctor
-npm run dev
+npm run build
+npm run systemd:install
+systemctl --user enable --now placement-collector
+
+curl -s http://127.0.0.1:3100/health
+curl -s -i http://127.0.0.1:3100/ready
+systemctl --user status placement-collector --no-pager
+journalctl --user -u placement-collector -n 100 --no-pager
 ```
 
-`data-repo:init` asks for an absolute data path, initializes it if necessary, creates `incoming/`, and writes both data paths into `.env`. It does not pretend to verify GitHub privacy. If `gh` is unavailable, create the private repository manually:
+`/health` is a process-liveness endpoint and returns HTTP 200 while the local server is running, including offline or auth-required states. `/ready` returns HTTP 200 only when WhatsApp is connected and the listener is active; otherwise it returns HTTP 503. `/status` provides expanded safe diagnostics without raw messages, IDs, phone numbers, secrets, or session details.
 
-```bash
-gh repo create placement-raw-data --private
-git -C /home/pd/placement-data remote add origin git@github.com:USERNAME/placement-raw-data.git
-```
-
-`setup` checks Node, Git, Chrome, and the code checkout; creates `.env` only when absent; generates a cryptographically random 32-byte salt; and uses mode `600`. It never overwrites an existing `.env` silently.
-
-## WhatsApp authentication and groups
-
-Use `OPENWA_HEADLESS=false` for first QR authentication. Scan once; the configured session directory is reused. After authentication, `OPENWA_HEADLESS=true` may be used for background operation. Session files are never committed.
-
-```bash
-npm run groups:list
-npm run groups:list -- --show-full-ids   # warning and YES confirmation required
-npm run groups:select
-```
-
-Selection writes exact IDs to `.env` and never sends a WhatsApp message. When `ALLOWED_GROUP_IDS` has entries, only exact IDs are accepted. Names are used only when the ID list is empty. Direct messages, own messages, notifications, and other groups are ignored.
-
-## Configuration
-
-`.env.example` documents all settings. `DATA_REPOSITORY_PATH` must be a separate Git checkout and `DATA_DIRECTORY` must be inside it. `HASH_SALT` must be at least 32 characters. `GIT_SYNC_ENABLED` is false by default; enable it only after `npm run git:check` passes. Runtime state and logs remain in the code checkout and are ignored.
-
-## Daily data
+## Data layout
 
 ```text
-<DATA_REPOSITORY_PATH>/incoming/YYYY-MM-DD/
-  messages.jsonl
-  manifest.json
-  failed-downloads.jsonl
-  attachments/
+<private-data-repository>/incoming/YYYY-MM-DD/
+├── messages.jsonl
+├── manifest.json
+├── failed-downloads.jsonl
+└── attachments/
 ```
 
-Each JSONL line is schema-validated. Raw WhatsApp message IDs are retained only for deduplication. Attachments use safe names, size limits, checksums, atomic writes, collision suffixes, and three bounded attempts. A failed download does not discard its message. `repair:manifest -- YYYY-MM-DD` backs up and rebuilds only the manifest.
+Attachments are downloaded locally before a message is archived, subject to `MAX_ATTACHMENT_SIZE_MB`, and recorded with checksums. Failed downloads do not discard the message.
 
-## Safe live test and Git operations
+## Manual Git upload
 
-After QR authentication, send one harmless test message from an allowed group:
+Keep local-only mode enabled during live testing. After reviewing the private repository:
 
 ```bash
-TODAY=$(TZ=Asia/Kolkata date +%F)
-npm run validate:day -- "$TODAY"
-npm run status
 npm run git:check
 npm run git:status
 npm run git:sync
 ```
 
-Git commands run only inside `DATA_REPOSITORY_PATH`, stage only `incoming/`, reject forbidden staged files, use a lock, rebase safely, never reset or force-push, and push only the configured branch. `git:check` performs no upload.
+Git sync stages only `incoming/`, never uses a hard reset or force-push, and leaves local raw files untouched when the network or remote is unavailable.
 
-Loopback diagnostics:
+## Systemd and PM2
 
-```bash
-curl http://127.0.0.1:3100/health
-curl http://127.0.0.1:3100/status
-npm run doctor
-```
-
-The endpoints contain no message text, raw IDs, phone numbers, sender names, secrets, or session details.
-
-## PM2 and validation
+Systemd user services are the recommended Linux background method:
 
 ```bash
-npm run build
-npm run service:start
-pm2 save
-pm2 startup
-npm run service:status
-npm run service:logs
+npm run systemd:install
+systemctl --user enable --now placement-collector
+npm run systemd:status
+npm run systemd:logs
 ```
 
-Available checks:
+The installer backs up an existing unit, validates the generated unit when possible, and does not enable or start it automatically. It rejects root execution. To remove it:
+
+```bash
+npm run systemd:uninstall
+```
+
+PM2 remains an alternative for users who already operate PM2, but do not run PM2 and systemd collectors simultaneously.
+
+## Health, tests, and validation
 
 ```bash
 npm run format:check
@@ -114,4 +122,21 @@ npm run build
 npm run validate:data
 ```
 
-If QR authentication repeats, stop the process and inspect the session directory; it is not deleted automatically. If Chrome is missing, install Chromium/Chrome. For Git problems, run `npm run git:check` and inspect the private checkout's remote, branch, and SSH authentication. Back up the private data repository independently. Do not claim the collector is live until the user has scanned the QR code and observed one real test message.
+For a daily archive:
+
+```bash
+TODAY=$(TZ=Asia/Kolkata date +%F)
+npm run validate:day -- "$TODAY"
+```
+
+## Troubleshooting
+
+- `auth_required`: stop the service and run `npm run auth` in a graphical desktop session, then run `npm run groups:select` if group settings need changing.
+- `OpenWA session is already in use`: stop the collector and wait for the process to exit; the shared lock prevents competing browsers. Only genuinely stale locks are removed automatically.
+- Browser launch or permission errors: run `npm run doctor`. It reports a safe ownership command for the specific session/runtime/log/data directory; it never changes ownership automatically.
+- `offline` or `reconnecting`: the local health server remains available. The collector retries with bounded exponential backoff and jitter when enabled.
+- Git failures: keep collecting locally and retry `npm run git:sync` after connectivity/authentication is restored.
+
+## Account-risk warning
+
+OpenWA is an unofficial WhatsApp automation client. Even read-only use may carry account or service risk. Use a dedicated account where appropriate, follow WhatsApp terms, protect the local session directory, and never share QR codes or session files.
