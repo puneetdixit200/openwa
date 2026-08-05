@@ -62,8 +62,8 @@ export async function startCollector() {
     });
     status.listenerActive = true;
     log.info('WhatsApp listener active');
-    if (cfg.emitUnread && client.emitUnreadMessages) await client.emitUnreadMessages();
     if (cfg.healthEnabled) server = startServer(cfg, status);
+    if (cfg.emitUnread && client.emitUnreadMessages) await client.emitUnreadMessages();
     if (cfg.gitSyncEnabled)
       setInterval(async () => {
         try {
