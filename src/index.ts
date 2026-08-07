@@ -33,6 +33,13 @@ export function shouldScheduleGitSync(cfg: Config) {
   return cfg.gitSyncEnabled && !cfg.localOnlyMode;
 }
 
+export function isGitSyncWindowOpen(date: Date, timezone: string) {
+  const hour = Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', hourCycle: 'h23' }).format(date),
+  );
+  return hour >= 7 && hour < 23;
+}
+
 function wait(ms: number, stop: Promise<void>) {
   return Promise.race([new Promise<void>((resolve) => setTimeout(resolve, ms)), stop]);
 }
@@ -129,7 +136,7 @@ export async function startCollector() {
   };
 
   const runGitSync = async () => {
-    if (gitBusy || !shouldScheduleGitSync(cfg)) return;
+    if (gitBusy || !shouldScheduleGitSync(cfg) || !isGitSyncWindowOpen(new Date(), cfg.timezone)) return;
     gitBusy = true;
     try {
       const result = await syncGit(cfg);

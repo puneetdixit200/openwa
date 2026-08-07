@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reconnectDelaySeconds, shouldScheduleGitSync } from '../src/index.js';
+import { isGitSyncWindowOpen, reconnectDelaySeconds, shouldScheduleGitSync } from '../src/index.js';
 import type { Config } from '../src/config.js';
 
 const cfg = {
@@ -19,5 +19,11 @@ describe('reconnect backoff', () => {
   it('lets local-only mode override automatic Git scheduling', () => {
     expect(shouldScheduleGitSync({ gitSyncEnabled: true, localOnlyMode: true } as Config)).toBe(false);
     expect(shouldScheduleGitSync({ gitSyncEnabled: true, localOnlyMode: false } as Config)).toBe(true);
+  });
+  it('allows automatic sync only from 07:00 through 22:59 in the configured timezone', () => {
+    expect(isGitSyncWindowOpen(new Date('2026-08-06T01:29:00.000Z'), 'Asia/Kolkata')).toBe(false);
+    expect(isGitSyncWindowOpen(new Date('2026-08-06T01:30:00.000Z'), 'Asia/Kolkata')).toBe(true);
+    expect(isGitSyncWindowOpen(new Date('2026-08-06T17:29:00.000Z'), 'Asia/Kolkata')).toBe(true);
+    expect(isGitSyncWindowOpen(new Date('2026-08-06T17:30:00.000Z'), 'Asia/Kolkata')).toBe(false);
   });
 });

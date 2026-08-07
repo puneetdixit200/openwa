@@ -39,18 +39,21 @@ npm run groups:select
 
 The collector uses `OPENWA_BACKGROUND_AUTH_MODE=existing-session-only` and `OPENWA_HEADLESS=true` in the background. If authentication expires, it reports `auth_required` and tells you to run `npm run auth`; it does not repeatedly open visible browsers or delete the session.
 
-## Local-only operation
+## Local-first operation
 
-Recommended first-run settings:
+For automatic private-repository sync every two hours during the Asia/Kolkata daytime window:
 
 ```env
-LOCAL_ONLY_MODE=true
-GIT_SYNC_ENABLED=false
+LOCAL_ONLY_MODE=false
+GIT_SYNC_ENABLED=true
+GIT_SYNC_INTERVAL_MINUTES=120
 OPENWA_AUTO_RECONNECT=true
 OPENWA_BACKGROUND_AUTH_MODE=existing-session-only
 ```
 
-With local-only mode, messages and attachments are written to the private local data repository first. Automatic Git fetch, pull, commit, and push are disabled. `npm run git:sync` remains available as an explicit manual operation later. Git errors cannot stop WhatsApp collection.
+Messages and attachments are always written to the private local data repository first. Automatic Git sync checks run every two hours, but only from 07:00 through 22:59 in `TIMEZONE` (`Asia/Kolkata` by default). The 23:00–06:59 period is intentionally skipped. Git errors cannot stop WhatsApp collection.
+
+For fully local-only operation, set `LOCAL_ONLY_MODE=true` and `GIT_SYNC_ENABLED=false`; `npm run git:sync` remains available as an explicit manual operation later.
 
 ## Verification and operation
 
