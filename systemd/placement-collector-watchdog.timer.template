@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Placement Collector Health Watchdog
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+AccuracySec=15s
+Unit=placement-collector-watchdog.service
+
+[Install]
+WantedBy=timers.target
