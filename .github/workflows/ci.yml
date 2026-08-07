@@ -23,7 +23,11 @@ jobs:
         env:
           PUPPETEER_SKIP_DOWNLOAD: "true"
           PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
-      - run: npm run format:check
+      - name: Show required formatting diff
+        run: |
+          npm run format
+          git diff --no-color
+          git diff --exit-code
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
