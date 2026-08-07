@@ -2,6 +2,8 @@
 Description=Local WhatsApp Placement Collector
 After=default.target
 OnFailure=placement-collector-failure.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -10,9 +12,10 @@ EnvironmentFile={{REPOSITORY_PATH}}/.env
 ExecStart={{NODE_PATH}} {{REPOSITORY_PATH}}/dist/src/index.js
 ExecStartPost={{REPOSITORY_PATH}}/scripts/notify-collector.sh started
 Restart=on-failure
-RestartSec=30
+RestartSec=15
 TimeoutStopSec=30
 KillSignal=SIGTERM
+KillMode=control-group
 Environment=NODE_ENV=production
 
 [Install]

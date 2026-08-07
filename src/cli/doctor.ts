@@ -17,13 +17,17 @@ function warn(name: string, detail: string) {
 async function main() {
   report('Node.js', Number(process.versions.node.split('.')[0]) >= 20, process.versions.node);
   report('Git', await commandExists('git'), 'available');
-  if (
-    await Promise.any(['google-chrome', 'chromium', 'chromium-browser'].map(commandExists))
-      .then(() => true)
-      .catch(() => false)
-  )
-    report('Chrome/Chromium', true, 'available');
-  else warn('Chrome/Chromium', 'not found; install Chrome or Chromium before QR authentication');
+  const browserOnPath = (await Promise.all(['google-chrome', 'chromium', 'chromium-browser'].map(commandExists))).some(
+    Boolean,
+  );
+  if (browserOnPath) report('Chrome/Chromium', true, 'available');
+  else warn('Chrome/Chromium', 'not found on PATH; a configured OPENWA_BROWSER_PATH may still be valid');
+  if (await commandExists('notify-send')) report('Desktop notifications', true, 'notify-send available');
+  else
+    warn(
+      'Desktop notifications',
+      'notify-send unavailable; alerts will still be written to logs/alerts.log and the journal',
+    );
   let cfg;
   try {
     cfg = await configForCommand();
@@ -98,9 +102,23 @@ async function main() {
     } catch {
       warn('systemd unit', 'not installed or user systemd is unavailable');
     }
+    try {
+      const timer = (
+        await exec('systemctl', [
+          '--user',
+          'show',
+          'placement-collector-watchdog.timer',
+          '--property=LoadState,UnitFileState,ActiveState',
+        ])
+      ).stdout;
+      const installed = !timer.includes('LoadState=not-found');
+      if (installed) report('Watchdog timer', true, 'installed');
+      else warn('Watchdog timer', 'not installed; rerun npm run systemd:install after building');
+    } catch {
+      warn('Watchdog timer', 'not installed or user systemd is unavailable');
+    }
   }
-  if (await commandExists('pm2')) report('PM2', true, 'available');
-  else warn('PM2', 'not installed; development mode remains available');
+  if (await commandExists('pm2')) warn('PM2', 'available; do not run PM2 and systemd collectors at the same time');
   console.log(`Messages today: ${await countToday(cfg)}`);
   if (cfg.healthEnabled) {
     try {

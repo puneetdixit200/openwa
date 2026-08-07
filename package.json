@@ -24,6 +24,7 @@
     "git:status": "tsx src/cli/git-status.ts",
     "git:sync": "tsx src/cli/git-sync.ts",
     "status": "tsx src/cli/status.ts",
+    "watchdog:run": "tsx src/watchdog.ts",
     "validate:data": "tsx src/cli/validate-data.ts",
     "validate:day": "tsx src/cli/validate-day.ts",
     "repair:manifest": "tsx src/cli/repair-manifest.ts",
@@ -34,11 +35,11 @@
     "service:logs": "pm2 logs placement-collector",
     "systemd:install": "bash scripts/install-systemd.sh",
     "systemd:uninstall": "bash scripts/uninstall-systemd.sh",
-    "systemd:start": "systemctl --user start placement-collector",
-    "systemd:stop": "systemctl --user stop placement-collector",
-    "systemd:restart": "systemctl --user restart placement-collector",
-    "systemd:status": "systemctl --user status placement-collector --no-pager",
-    "systemd:logs": "journalctl --user -u placement-collector -f"
+    "systemd:start": "systemctl --user start placement-collector.service placement-collector-watchdog.timer",
+    "systemd:stop": "systemctl --user stop placement-collector-watchdog.timer placement-collector.service",
+    "systemd:restart": "systemctl --user restart placement-collector.service",
+    "systemd:status": "systemctl --user status placement-collector.service placement-collector-watchdog.timer --no-pager",
+    "systemd:logs": "journalctl --user -u placement-collector.service -u placement-collector-watchdog.service -f"
   },
   "dependencies": {
     "@open-wa/wa-automate": "4.76.0",
