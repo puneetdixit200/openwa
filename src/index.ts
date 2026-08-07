@@ -157,6 +157,7 @@ export async function startCollector() {
   };
 
   if (shouldScheduleGitSync(cfg)) {
+    if (isGitSyncWindowOpen(new Date(), cfg.timezone)) void runGitSync();
     gitTimer = setInterval(() => void runGitSync(), cfg.gitIntervalMinutes * 60_000);
     gitTimer.unref?.();
   }
