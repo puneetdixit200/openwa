@@ -20,6 +20,9 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm install
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
       - run: npm run format:check
       - run: npm run typecheck
       - run: npm run lint
