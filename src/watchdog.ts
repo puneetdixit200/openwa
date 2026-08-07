@@ -39,20 +39,22 @@ export function decideWatchdog(probe: WatchdogProbe, previous: WatchdogMemory): 
   let restart = false;
 
   if (!probe.healthReachable) {
+    if (previous.automaticRestarts >= 3) {
+      next.healthFailures = 0;
+      next.notReadyChecks = 0;
+      next.lastState = 'gave-up';
+      if (previous.lastState !== 'gave-up') events.push('watchdog-gave-up');
+      return { memory: next, events, restart: false };
+    }
     next.healthFailures += 1;
     next.notReadyChecks = 0;
-    if (previous.lastState !== 'unreachable' && previous.lastState !== 'gave-up') events.push('unreachable');
+    if (previous.lastState !== 'unreachable') events.push('unreachable');
     next.lastState = 'unreachable';
     if (next.healthFailures >= 3) {
       next.healthFailures = 0;
-      if (next.automaticRestarts < 3) {
-        next.automaticRestarts += 1;
-        events.push('watchdog-restart');
-        restart = true;
-      } else if (previous.lastState !== 'gave-up') {
-        events.push('watchdog-gave-up');
-        next.lastState = 'gave-up';
-      }
+      next.automaticRestarts += 1;
+      events.push('watchdog-restart');
+      restart = true;
     }
     return { memory: next, events, restart };
   }
@@ -84,19 +86,20 @@ export function decideWatchdog(probe: WatchdogProbe, previous: WatchdogMemory): 
   }
 
   if (connectionState === 'error' || connectionState === 'stopped') {
+    if (previous.automaticRestarts >= 3) {
+      next.notReadyChecks = 0;
+      next.lastState = 'gave-up';
+      if (previous.lastState !== 'gave-up') events.push('watchdog-gave-up');
+      return { memory: next, events, restart: false };
+    }
     next.notReadyChecks += 1;
-    if (previous.lastState !== connectionState && previous.lastState !== 'gave-up') events.push('failed');
+    if (previous.lastState !== connectionState) events.push('failed');
     next.lastState = connectionState;
     if (next.notReadyChecks >= 2) {
       next.notReadyChecks = 0;
-      if (next.automaticRestarts < 3) {
-        next.automaticRestarts += 1;
-        events.push('watchdog-restart');
-        restart = true;
-      } else if (previous.lastState !== 'gave-up') {
-        events.push('watchdog-gave-up');
-        next.lastState = 'gave-up';
-      }
+      next.automaticRestarts += 1;
+      events.push('watchdog-restart');
+      restart = true;
     }
     return { memory: next, events, restart };
   }
@@ -152,11 +155,34 @@ async function restartCollector() {
   await exec('systemctl', ['--user', 'restart', 'placement-collector.service']);
 }
 
+async function collectorActiveState() {
+  try {
+    const result = await exec('systemctl', [
+      '--user',
+      'show',
+      'placement-collector.service',
+      '--property=ActiveState',
+      '--value',
+    ]);
+    return result.stdout.trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 export async function runWatchdog(repo = process.cwd()) {
   const runtimeDir = path.resolve(repo, process.env.RUNTIME_DIRECTORY || './runtime');
   await fs.mkdir(runtimeDir, { recursive: true });
   const stateFile = path.join(runtimeDir, 'watchdog-state.json');
   const previous = await loadMemory(stateFile);
+
+  const serviceState = await collectorActiveState();
+  if (serviceState === 'inactive') {
+    const idle = { ...emptyWatchdogMemory(), lastState: 'inactive' };
+    await atomicWrite(stateFile, `${JSON.stringify(idle, null, 2)}\n`);
+    console.log(JSON.stringify({ serviceState, watchdog: 'idle' }));
+    return;
+  }
 
   let probe: WatchdogProbe;
   try {
@@ -183,6 +209,7 @@ export async function runWatchdog(repo = process.cwd()) {
   await atomicWrite(stateFile, `${JSON.stringify(decision.memory, null, 2)}\n`);
   console.log(
     JSON.stringify({
+      serviceState,
       healthReachable: probe.healthReachable,
       connectionState: probe.connectionState ?? 'unreachable',
       restartRequested: decision.restart,
