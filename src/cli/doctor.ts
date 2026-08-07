@@ -17,12 +17,8 @@ function warn(name: string, detail: string) {
 async function main() {
   report('Node.js', Number(process.versions.node.split('.')[0]) >= 20, process.versions.node);
   report('Git', await commandExists('git'), 'available');
-  if (
-    await Promise.any(['google-chrome', 'chromium', 'chromium-browser'].map(commandExists))
-      .then(() => true)
-      .catch(() => false)
-  )
-    report('Chrome/Chromium', true, 'available');
+  const browserOnPath = (await Promise.all(['google-chrome', 'chromium', 'chromium-browser'].map(commandExists))).some(Boolean);
+  if (browserOnPath) report('Chrome/Chromium', true, 'available');
   else warn('Chrome/Chromium', 'not found on PATH; a configured OPENWA_BROWSER_PATH may still be valid');
   if (await commandExists('notify-send')) report('Desktop notifications', true, 'notify-send available');
   else warn('Desktop notifications', 'notify-send unavailable; alerts will still be written to logs/alerts.log and the journal');
