@@ -51,7 +51,7 @@ OPENWA_AUTO_RECONNECT=true
 OPENWA_BACKGROUND_AUTH_MODE=existing-session-only
 ```
 
-Messages and attachments are always written to the private local data repository first. Automatic Git sync checks run every two hours, but only from 07:00 through 22:59 in `TIMEZONE` (`Asia/Kolkata` by default). The 23:00–06:59 period is intentionally skipped. Git errors cannot stop WhatsApp collection.
+Messages and attachments are always written to the private local data repository first. After each successful message save, the collector asynchronously attempts a Git sync when inside the allowed window. A scheduled check also runs every two hours, but only from 07:00 through 22:59 in `TIMEZONE` (`Asia/Kolkata` by default). The 23:00–06:59 period is intentionally skipped. Git errors cannot stop WhatsApp collection.
 
 The user service sends a desktop notification when it starts and a critical notification if systemd marks it failed. Detailed diagnostics remain in the user journal; notifications never include message, group, account, or secret data.
 

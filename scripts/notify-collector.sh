@@ -13,6 +13,16 @@ case "$event" in
     body="The collector service failed. Check: journalctl --user -u placement-collector -n 100"
     urgency="critical"
     ;;
+  sync-success)
+    title="Placement data sync complete"
+    body="New local placement data was committed to the private data repository."
+    urgency="normal"
+    ;;
+  sync-failed)
+    title="Placement data sync failed"
+    body="Local data is safe; Git sync will retry. Check: npm run git:sync"
+    urgency="critical"
+    ;;
   *)
     exit 2
     ;;

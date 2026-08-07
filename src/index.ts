@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import pino from 'pino';
 import { loadConfig, prepareLocalDirectories, checkLocalPreflight } from './config.js';
 import {
@@ -38,6 +39,14 @@ export function isGitSyncWindowOpen(date: Date, timezone: string) {
     new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', hourCycle: 'h23' }).format(date),
   );
   return hour >= 7 && hour < 23;
+}
+
+function notifyDesktop(cfg: Config, event: string) {
+  const child = spawn(path.join(cfg.codeRepoPath, 'scripts', 'notify-collector.sh'), [event], {
+    stdio: 'ignore',
+    detached: true,
+  });
+  child.unref();
 }
 
 function wait(ms: number, stop: Promise<void>) {
@@ -132,6 +141,7 @@ export async function startCollector() {
     await state.add(msg.messageId);
     status.lastMessageReceivedAt = msg.receivedAt;
     void updatePendingGitFiles();
+    void runGitSync();
     log.info({ messageId: msg.messageId.slice(0, 8), type: msg.type }, 'message saved');
   };
 
@@ -144,12 +154,14 @@ export async function startCollector() {
       status.lastGitSyncStatus = result.status;
       status.lastGitSyncError = null;
       await updatePendingGitFiles();
+      if (result.status === 'success') notifyDesktop(cfg, 'sync-success');
       log.info({ status: result.status }, 'git sync complete');
     } catch (error) {
       status.lastGitSyncAt = new Date().toISOString();
       status.lastGitSyncStatus = 'error';
       status.lastGitSyncError = safeErrorMessage(error);
       await updatePendingGitFiles();
+      notifyDesktop(cfg, 'sync-failed');
       log.error({ error: safeErrorMessage(error) }, 'git sync failed; local collection continues');
     } finally {
       gitBusy = false;
