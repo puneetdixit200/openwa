@@ -10,6 +10,23 @@ Keep the code repository separate from the private raw-data repository. Never us
 
 WhatsApp needs an internet connection to deliver messages. Local storage continues to work without GitHub. GitHub sync is optional and can be performed later. Unread replay is best effort; messages received while the laptop was fully offline are not guaranteed to be recoverable.
 
+## Reliability model
+
+The collector is designed to fail visibly instead of silently:
+
+- WhatsApp reconnects with bounded exponential backoff.
+- Expired authentication becomes `auth_required` instead of deleting the local session.
+- Message-processing/storage failures trigger a critical local alert.
+- Git failures never stop local collection and trigger a critical local alert.
+- `systemd` restarts the collector after process crashes.
+- An independent watchdog checks the local health endpoint every two minutes.
+- After three consecutive unreachable health checks, the watchdog restarts the collector.
+- Automatic watchdog restarts are capped at three until the service becomes ready again, preventing an endless restart loop.
+- Authentication-required and ordinary network-offline states are never "fixed" by pointless restart loops.
+- Alerts are rate-limited, written persistently to `logs/alerts.log`, and also sent through `notify-send` when desktop notifications are available.
+
+No software can guarantee recovery from power loss, disk failure, WhatsApp account restrictions, or messages that never reach the laptop. The goal here is bounded recovery, durable local writes, and loud failure reporting rather than magical immortality.
+
 ## Requirements
 
 Linux, Node.js 20+, Git, and the configured Chrome for Testing/Chromium executable. A graphical desktop session is required for `npm run auth`. Use a private raw-data Git repository if manual sync is enabled.
@@ -20,6 +37,7 @@ Linux, Node.js 20+, Git, and the configured Chrome for Testing/Chromium executab
 git clone https://github.com/puneetdixit200/openwa.git
 cd openwa
 npm install
+npm run build
 ```
 
 Create `.env` from `.env.example` with `npm run setup`, or use the existing local configuration. Never commit `.env`.
@@ -29,19 +47,35 @@ Create `.env` from `.env.example` with `npm run setup`, or use the existing loca
 The background service must not own the session during interactive commands:
 
 ```bash
-systemctl --user stop placement-collector
+systemctl --user stop placement-collector.service
 cd /home/pd/openwa
 npm run auth
 npm run groups:select
 ```
 
-`npm run auth` opens a visible browser only for interactive authentication. Scan the QR locally when WhatsApp asks for it. The command does not send messages or select groups. `groups:select` uses `getAllGroups(false)`, prints names only, accepts comma-separated indexes, asks for confirmation, and stores exact IDs without displaying them. For example, select `1,2` at the prompt.
+`npm run auth` opens a visible browser only for interactive authentication. Scan the QR locally when WhatsApp asks for it. The command does not send messages or select groups. `groups:select` uses `getAllGroups(false)`, prints names only, accepts comma-separated indexes, asks for confirmation, and stores exact IDs without displaying them.
 
-The collector uses `OPENWA_BACKGROUND_AUTH_MODE=existing-session-only` and `OPENWA_HEADLESS=true` in the background. If authentication expires, it reports `auth_required` and tells you to run `npm run auth`; it does not repeatedly open visible browsers or delete the session.
+The collector uses `OPENWA_BACKGROUND_AUTH_MODE=existing-session-only` and `OPENWA_HEADLESS=true` in the background. If authentication expires, it reports `auth_required`, creates a local desktop/persistent alert, and tells you to run `npm run auth`; it does not repeatedly open visible browsers or delete the session.
 
-## Local-first operation
+## Fully local-only operation
 
-For automatic private-repository sync every two hours during the Asia/Kolkata daytime window:
+Use this when GitHub must not be part of normal collection:
+
+```env
+LOCAL_ONLY_MODE=true
+GIT_SYNC_ENABLED=false
+OPENWA_AUTO_RECONNECT=true
+OPENWA_BACKGROUND_AUTH_MODE=existing-session-only
+OPENWA_HEADLESS=true
+```
+
+Messages and attachments are written to the local private data repository first. No automatic Git fetch, pull, commit, or push is attempted. `npm run git:sync` remains available later as an explicit manual operation.
+
+"Local-only" does **not** mean WhatsApp itself works without internet. Your laptop must be online to receive new WhatsApp messages. If connectivity disappears, the local service remains alive, reports `offline`/`reconnecting`, notifies you, and reconnects when the network returns. Unread replay after an outage remains best effort.
+
+## Optional automatic private-repository sync
+
+For automatic private-repository sync during the Asia/Kolkata daytime window:
 
 ```env
 LOCAL_ONLY_MODE=false
@@ -51,27 +85,78 @@ OPENWA_AUTO_RECONNECT=true
 OPENWA_BACKGROUND_AUTH_MODE=existing-session-only
 ```
 
-Messages and attachments are always written to the private local data repository first. After each successful message save, the collector asynchronously attempts a Git sync when inside the allowed window. A scheduled check also runs every two hours, but only from 07:00 through 22:59 in `TIMEZONE` (`Asia/Kolkata` by default). The 23:00–06:59 period is intentionally skipped. Git errors cannot stop WhatsApp collection.
+Messages and attachments are always written locally first. After each successful message save, the collector asynchronously attempts a Git sync when inside the allowed window. A scheduled check also runs every two hours, from 07:00 through 22:59 in `TIMEZONE` (`Asia/Kolkata` by default). Git errors cannot stop WhatsApp collection.
 
-The user service sends a desktop notification when it starts and a critical notification if systemd marks it failed. Detailed diagnostics remain in the user journal; notifications never include message, group, account, or secret data.
+## Systemd installation and watchdog
 
-For fully local-only operation, set `LOCAL_ONLY_MODE=true` and `GIT_SYNC_ENABLED=false`; `npm run git:sync` remains available as an explicit manual operation later.
-
-## Verification and operation
+Systemd user services are the recommended Linux background method:
 
 ```bash
-npm run doctor
 npm run build
 npm run systemd:install
-systemctl --user enable --now placement-collector
-
-curl -s http://127.0.0.1:3100/health
-curl -s -i http://127.0.0.1:3100/ready
-systemctl --user status placement-collector --no-pager
-journalctl --user -u placement-collector -n 100 --no-pager
+systemctl --user enable --now placement-collector.service placement-collector-watchdog.timer
 ```
 
-`/health` is a process-liveness endpoint and returns HTTP 200 while the local server is running, including offline or auth-required states. `/ready` returns HTTP 200 only when WhatsApp is connected and the listener is active; otherwise it returns HTTP 503. `/status` provides expanded safe diagnostics without raw messages, IDs, phone numbers, secrets, or session details.
+The installer creates four user units:
+
+- `placement-collector.service`
+- `placement-collector-failure.service`
+- `placement-collector-watchdog.service`
+- `placement-collector-watchdog.timer`
+
+It backs up existing units, validates generated units when possible, and does not enable or start anything automatically.
+
+Verify them with:
+
+```bash
+npm run systemd:status
+systemctl --user list-timers placement-collector-watchdog.timer --no-pager
+journalctl --user -u placement-collector.service -u placement-collector-watchdog.service -n 100 --no-pager
+```
+
+To remove them:
+
+```bash
+npm run systemd:uninstall
+```
+
+PM2 remains an alternative for users who already operate PM2, but do not run PM2 and systemd collectors simultaneously.
+
+## Notifications and persistent alerts
+
+The collector/watchdog can notify on:
+
+- service failure
+- WhatsApp authentication expiry
+- WhatsApp offline/disconnected state
+- successful recovery
+- local message-processing/storage failure
+- unread replay failure
+- Git sync failure
+- unreachable health endpoint
+- persistent not-ready state
+- watchdog restart
+- watchdog restart budget exhausted
+
+Desktop delivery uses `notify-send` when available. Every attempted alert is also written to:
+
+```text
+logs/alerts.log
+```
+
+This fallback matters when the graphical notification bus is unavailable. The user journal remains another independent source of failure information.
+
+## Health and readiness
+
+```bash
+curl -s http://127.0.0.1:3100/health
+curl -s -i http://127.0.0.1:3100/ready
+curl -s http://127.0.0.1:3100/status
+```
+
+`/health` is process liveness and stays HTTP 200 while the local server is alive, including offline or auth-required states. `/ready` is HTTP 200 only when WhatsApp is connected and the listener is active; otherwise it returns HTTP 503. `/status` contains expanded safe diagnostics without raw messages, IDs, phone numbers, secrets, or session details.
+
+The watchdog uses `/health`, not GitHub or an external monitoring service, so it works on the local machine without cloud infrastructure.
 
 ## Data layout
 
@@ -83,11 +168,11 @@ journalctl --user -u placement-collector -n 100 --no-pager
 └── attachments/
 ```
 
-Attachments are downloaded locally before a message is archived, subject to `MAX_ATTACHMENT_SIZE_MB`, and recorded with checksums. Failed downloads do not discard the message.
+Attachments are downloaded locally before a message is archived, subject to `MAX_ATTACHMENT_SIZE_MB`, and recorded with checksums. Failed downloads do not discard the message. Message IDs are reconciled from the raw JSONL archive on startup so a crash between the raw write and deduplication-state update does not create duplicates after restart.
 
 ## Manual Git upload
 
-Keep local-only mode enabled during live testing. After reviewing the private repository:
+Keep local-only mode enabled if you do not want background Git activity. When you intentionally want to upload reviewed data:
 
 ```bash
 npm run git:check
@@ -97,35 +182,20 @@ npm run git:sync
 
 Git sync stages only `incoming/`, never uses a hard reset or force-push, and leaves local raw files untouched when the network or remote is unavailable.
 
-## Systemd and PM2
-
-Systemd user services are the recommended Linux background method:
+## Doctor, tests, and validation
 
 ```bash
-npm run systemd:install
-systemctl --user enable --now placement-collector
-npm run systemd:status
-npm run systemd:logs
-```
-
-The installer backs up an existing unit, validates the generated unit when possible, and does not enable or start it automatically. It rejects root execution. To remove it:
-
-```bash
-npm run systemd:uninstall
-```
-
-PM2 remains an alternative for users who already operate PM2, but do not run PM2 and systemd collectors simultaneously.
-
-## Health, tests, and validation
-
-```bash
+npm run doctor
 npm run format:check
 npm run typecheck
 npm run lint
 npm test
 npm run build
+npm run watchdog:run
 npm run validate:data
 ```
+
+`doctor` checks configuration, local directory/browser usability, notification transport availability, the installed collector systemd unit, and whether the watchdog timer is installed.
 
 For a daily archive:
 
@@ -134,13 +204,18 @@ TODAY=$(TZ=Asia/Kolkata date +%F)
 npm run validate:day -- "$TODAY"
 ```
 
+CI runs formatting, type checking, linting, tests, production build, and shell syntax checks on pull requests and `main`.
+
 ## Troubleshooting
 
-- `auth_required`: stop the service and run `npm run auth` in a graphical desktop session, then run `npm run groups:select` if group settings need changing.
+- `auth_required`: stop the service and run `npm run auth` in a graphical desktop session, then start the service again. Run `npm run groups:select` only if group settings need changing.
 - `OpenWA session is already in use`: stop the collector and wait for the process to exit; the shared lock prevents competing browsers. Only genuinely stale locks are removed automatically.
 - Browser launch or permission errors: run `npm run doctor`. It reports a safe ownership command for the specific session/runtime/log/data directory; it never changes ownership automatically.
-- `offline` or `reconnecting`: the local health server remains available. The collector retries with bounded exponential backoff and jitter when enabled.
-- Git failures: keep collecting locally and retry `npm run git:sync` after connectivity/authentication is restored.
+- `offline` or `reconnecting`: the local health server remains available. The collector retries with bounded exponential backoff and jitter. The watchdog deliberately does not restart normal network-offline/auth-required states.
+- Health endpoint unreachable: the watchdog waits for three consecutive failed checks before restarting, avoiding restarts for tiny transient delays.
+- Repeated hard failures: after three watchdog restarts without a successful ready state, automatic watchdog restarts stop and a `watchdog-gave-up` critical alert is recorded.
+- Git failures: local data remains untouched. Retry `npm run git:sync` after connectivity/authentication is restored.
+- Notification popup missing: inspect `logs/alerts.log` and `journalctl --user -u placement-collector.service -u placement-collector-watchdog.service`.
 
 ## Account-risk warning
 
