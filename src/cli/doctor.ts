@@ -17,11 +17,17 @@ function warn(name: string, detail: string) {
 async function main() {
   report('Node.js', Number(process.versions.node.split('.')[0]) >= 20, process.versions.node);
   report('Git', await commandExists('git'), 'available');
-  const browserOnPath = (await Promise.all(['google-chrome', 'chromium', 'chromium-browser'].map(commandExists))).some(Boolean);
+  const browserOnPath = (
+    await Promise.all(['google-chrome', 'chromium', 'chromium-browser'].map(commandExists))
+  ).some(Boolean);
   if (browserOnPath) report('Chrome/Chromium', true, 'available');
   else warn('Chrome/Chromium', 'not found on PATH; a configured OPENWA_BROWSER_PATH may still be valid');
   if (await commandExists('notify-send')) report('Desktop notifications', true, 'notify-send available');
-  else warn('Desktop notifications', 'notify-send unavailable; alerts will still be written to logs/alerts.log and the journal');
+  else
+    warn(
+      'Desktop notifications',
+      'notify-send unavailable; alerts will still be written to logs/alerts.log and the journal',
+    );
   let cfg;
   try {
     cfg = await configForCommand();
@@ -112,7 +118,8 @@ async function main() {
       warn('Watchdog timer', 'not installed or user systemd is unavailable');
     }
   }
-  if (await commandExists('pm2')) warn('PM2', 'available; do not run PM2 and systemd collectors at the same time');
+  if (await commandExists('pm2'))
+    warn('PM2', 'available; do not run PM2 and systemd collectors at the same time');
   console.log(`Messages today: ${await countToday(cfg)}`);
   if (cfg.healthEnabled) {
     try {
