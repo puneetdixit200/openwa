@@ -1,12 +1,14 @@
 [Unit]
 Description=Local WhatsApp Placement Collector
 After=default.target
+OnFailure=placement-collector-failure.service
 
 [Service]
 Type=simple
 WorkingDirectory={{REPOSITORY_PATH}}
 EnvironmentFile={{REPOSITORY_PATH}}/.env
 ExecStart={{NODE_PATH}} {{REPOSITORY_PATH}}/dist/src/index.js
+ExecStartPost={{REPOSITORY_PATH}}/scripts/notify-collector.sh started
 Restart=on-failure
 RestartSec=30
 TimeoutStopSec=30

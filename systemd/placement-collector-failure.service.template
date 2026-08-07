@@ -1,0 +1,7 @@
+[Unit]
+Description=Placement Collector Failure Notification
+
+[Service]
+Type=oneshot
+ExecStart={{REPOSITORY_PATH}}/scripts/notify-collector.sh failed
+Environment=NODE_ENV=production
