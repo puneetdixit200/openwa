@@ -1,0 +1,10 @@
+[Unit]
+Description=Placement Collector Health Watchdog
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPOSITORY_PATH}}
+EnvironmentFile={{REPOSITORY_PATH}}/.env
+ExecStart={{NODE_PATH}} {{REPOSITORY_PATH}}/dist/src/watchdog.js
+Environment=NODE_ENV=production
