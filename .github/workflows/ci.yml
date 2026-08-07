@@ -21,13 +21,9 @@ jobs:
           cache: npm
       - run: npm install
         env:
-          PUPPETEER_SKIP_DOWNLOAD: "true"
-          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
-      - name: Show required formatting diff
-        run: |
-          npm run format
-          git diff --no-color
-          git diff --exit-code
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
+      - run: npm run format:check
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
