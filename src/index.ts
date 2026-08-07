@@ -21,6 +21,8 @@ import { safeErrorMessage } from './utils.js';
 
 class ConnectionLostError extends Error {}
 
+type ConnectionAlert = 'auth-required' | 'offline' | null;
+
 export function reconnectDelaySeconds(cfg: Config, attempt: number, random = Math.random) {
   const base = Math.min(
     cfg.reconnectMaxSeconds,
@@ -42,11 +44,17 @@ export function isGitSyncWindowOpen(date: Date, timezone: string) {
 }
 
 function notifyDesktop(cfg: Config, event: string) {
-  const child = spawn(path.join(cfg.codeRepoPath, 'scripts', 'notify-collector.sh'), [event], {
-    stdio: 'ignore',
-    detached: true,
-  });
-  child.unref();
+  try {
+    const child = spawn(path.join(cfg.codeRepoPath, 'scripts', 'notify-collector.sh'), [event], {
+      stdio: 'ignore',
+      detached: true,
+    });
+    // Notification delivery must never be capable of crashing the collector.
+    child.on('error', () => {});
+    child.unref();
+  } catch {
+    // The persistent journal/log path remains the source of truth if desktop notification launch itself fails.
+  }
 }
 
 function wait(ms: number, stop: Promise<void>) {
@@ -105,44 +113,28 @@ export async function startCollector() {
   };
 
   const server = cfg.healthEnabled ? await startServer(cfg, status) : undefined;
-  const lock = await acquireSessionLock(cfg.runtimeDir, 'collector').catch((error) => {
+  let lock: Awaited<ReturnType<typeof acquireSessionLock>>;
+  try {
+    lock = await acquireSessionLock(cfg.runtimeDir, 'collector');
+  } catch (error) {
     status.connectionState = 'error';
     status.lastSafeError = safeErrorMessage(error);
     log.error({ error: safeErrorMessage(error) }, 'OpenWA session is already in use');
-    return undefined;
-  });
-  if (!lock) return;
+    notifyDesktop(cfg, 'failed');
+    await closeServer(server);
+    throw error;
+  }
 
   let activeClient: OpenWaClient | undefined;
   let stopping = false;
   let gitTimer: NodeJS.Timeout | undefined;
   let gitBusy = false;
+  let lastConnectionAlert: ConnectionAlert = null;
   let resolveStop!: () => void;
   const stop = new Promise<void>((resolve) => (resolveStop = resolve));
 
   const updatePendingGitFiles = async () => {
     status.pendingGitFileCount = await pendingGitFileCount(cfg).catch(() => 0);
-  };
-
-  const save = async (raw: IncomingMessage) => {
-    if (!allowedMessage(raw, cfg) || shouldIgnoreMessage(raw)) {
-      log.debug('ignored message outside the configured read-only allowlist');
-      return;
-    }
-    const msg = normalise(raw, cfg);
-    if (state.has(msg.messageId)) {
-      log.debug({ messageId: msg.messageId.slice(0, 8) }, 'duplicate skipped');
-      return;
-    }
-    const receivedDate = new Date(msg.timestamp);
-    const folder = await dateFolder(cfg, receivedDate);
-    msg.attachment = await saveAttachment(cfg, activeClient ?? {}, raw, folder);
-    await writeMessage(cfg, msg, receivedDate);
-    await state.add(msg.messageId);
-    status.lastMessageReceivedAt = msg.receivedAt;
-    void updatePendingGitFiles();
-    void runGitSync();
-    log.info({ messageId: msg.messageId.slice(0, 8), type: msg.type }, 'message saved');
   };
 
   const runGitSync = async () => {
@@ -166,6 +158,27 @@ export async function startCollector() {
     } finally {
       gitBusy = false;
     }
+  };
+
+  const save = async (raw: IncomingMessage) => {
+    if (!allowedMessage(raw, cfg) || shouldIgnoreMessage(raw)) {
+      log.debug('ignored message outside the configured read-only allowlist');
+      return;
+    }
+    const msg = normalise(raw, cfg);
+    if (state.has(msg.messageId)) {
+      log.debug({ messageId: msg.messageId.slice(0, 8) }, 'duplicate skipped');
+      return;
+    }
+    const receivedDate = new Date(msg.timestamp);
+    const folder = await dateFolder(cfg, receivedDate);
+    msg.attachment = await saveAttachment(cfg, activeClient ?? {}, raw, folder);
+    await writeMessage(cfg, msg, receivedDate);
+    await state.add(msg.messageId);
+    status.lastMessageReceivedAt = msg.receivedAt;
+    void updatePendingGitFiles();
+    void runGitSync();
+    log.info({ messageId: msg.messageId.slice(0, 8), type: msg.type }, 'message saved');
   };
 
   if (shouldScheduleGitSync(cfg)) {
@@ -193,6 +206,7 @@ export async function startCollector() {
             await save(raw);
           } catch (error) {
             status.lastSafeError = safeErrorMessage(error);
+            notifyDesktop(cfg, 'storage-failed');
             log.error({ error: safeErrorMessage(error) }, 'message processing failed');
           }
         });
@@ -204,9 +218,14 @@ export async function startCollector() {
             await client.emitUnreadMessages();
           } catch (error) {
             status.lastSafeError = safeErrorMessage(error);
+            notifyDesktop(cfg, 'replay-failed');
             log.error({ error: safeErrorMessage(error) }, 'unread replay failed; live listener remains active');
           }
           status.connectionState = 'connected';
+        }
+        if (lastConnectionAlert) {
+          notifyDesktop(cfg, 'recovered');
+          lastConnectionAlert = null;
         }
         await waitForClient(client, stop);
         if (stopping) break;
@@ -221,14 +240,19 @@ export async function startCollector() {
         if (isAuthRequiredError(error)) {
           status.connectionState = 'auth_required';
           status.lastSafeError = 'WhatsApp authentication required; run npm run auth';
+          if (lastConnectionAlert !== 'auth-required') notifyDesktop(cfg, 'auth-required');
+          lastConnectionAlert = 'auth-required';
           log.warn(status.lastSafeError);
         } else {
           status.connectionState = 'offline';
           status.lastSafeError = safeErrorMessage(error);
+          if (lastConnectionAlert !== 'offline') notifyDesktop(cfg, 'offline');
+          lastConnectionAlert = 'offline';
           log.warn({ error: safeErrorMessage(error) }, 'WhatsApp unavailable; local service remains alive');
         }
         if (!cfg.autoReconnect) {
           status.connectionState = 'error';
+          notifyDesktop(cfg, 'failed');
           break;
         }
         status.reconnectAttempt += 1;
@@ -256,10 +280,12 @@ export async function startCollector() {
   process.once('SIGTERM', () => void shutdown());
   process.once('uncaughtException', (error) => {
     log.fatal({ error: safeErrorMessage(error) }, 'uncaught exception');
+    notifyDesktop(cfg, 'failed');
     void shutdown(1);
   });
   process.once('unhandledRejection', (error) => {
     log.fatal({ error: safeErrorMessage(error) }, 'unhandled rejection');
+    notifyDesktop(cfg, 'failed');
     void shutdown(1);
   });
   void connectionLoop();
