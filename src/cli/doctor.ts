@@ -17,11 +17,7 @@ function warn(name: string, detail: string) {
 async function main() {
   report('Node.js', Number(process.versions.node.split('.')[0]) >= 20, process.versions.node);
   report('Git', await commandExists('git'), 'available');
-  const browserOnPath = (await Promise.all(['google-chrome', 'chromium', 'chromium-browser'].map(commandExists))).some(
-    Boolean,
-  );
-  if (browserOnPath) report('Chrome/Chromium', true, 'available');
-  else warn('Chrome/Chromium', 'not found on PATH; a configured OPENWA_BROWSER_PATH may still be valid');
+  report('WhatsApp client', true, 'Baileys protocol client; no browser process required');
   if (await commandExists('notify-send')) report('Desktop notifications', true, 'notify-send available');
   else
     warn(
@@ -58,7 +54,7 @@ async function main() {
   }
   try {
     await checkLocalPreflight(cfg);
-    report('Local preflight', true, 'directories and configured browser are usable');
+    report('Local preflight', true, 'local directories are usable');
   } catch (error) {
     report('Local preflight', false, (error as Error).message);
   }

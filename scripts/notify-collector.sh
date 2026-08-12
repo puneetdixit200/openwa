@@ -58,6 +58,42 @@ case "$event" in
     body="Local data is safe; Git sync will retry. Check: npm run git:sync"
     urgency="critical"
     ;;
+  batch-started)
+    title="Placement collector batch started"
+    body="The local collector started its scheduled unread replay and sync run."
+    urgency="normal"
+    cooldown=600
+    ;;
+  batch-complete)
+    title="Placement collector batch complete"
+    body="The scheduled local collection and private-data sync completed; the heavy process was stopped."
+    urgency="normal"
+    cooldown=600
+    ;;
+  batch-failed)
+    title="Placement collector batch failed"
+    body="The scheduled collection or private-data sync failed. Local data was preserved; check the batch journal."
+    urgency="critical"
+    cooldown=300
+    ;;
+  batch-ready-timeout)
+    title="Placement collector readiness timeout"
+    body="The scheduled collector did not become ready in time. Local data was preserved."
+    urgency="critical"
+    cooldown=300
+    ;;
+  batch-git-sync-failed)
+    title="Placement batch Git sync failed"
+    body="The batch stopped safely, but private-repository sync failed. Local data was preserved for retry."
+    urgency="critical"
+    cooldown=300
+    ;;
+  batch-auth-required)
+    title="WhatsApp authentication required"
+    body="The scheduled batch needs authentication. Run npm run auth after stopping batch mode."
+    urgency="critical"
+    cooldown=900
+    ;;
   unreachable)
     title="Placement collector health check failed"
     body="The local health endpoint is unreachable. The watchdog will retry and may restart the service."

@@ -29,7 +29,7 @@ No software can guarantee recovery from power loss, disk failure, WhatsApp accou
 
 ## Requirements
 
-Linux, Node.js 20+, Git, and the configured Chrome for Testing/Chromium executable. A graphical desktop session is required for `npm run auth`. Use a private raw-data Git repository if manual sync is enabled.
+Linux, Node.js 20+, and Git. The collector uses the Baileys WhatsApp protocol client, so it does not launch Chrome, Brave, or any normal browser profile. Use a private raw-data Git repository if manual sync is enabled.
 
 ## Installation
 
@@ -53,9 +53,9 @@ npm run auth
 npm run groups:select
 ```
 
-`npm run auth` opens a visible browser only for interactive authentication. Scan the QR locally when WhatsApp asks for it. The command does not send messages or select groups. `groups:select` uses `getAllGroups(false)`, prints names only, accepts comma-separated indexes, asks for confirmation, and stores exact IDs without displaying them.
+`npm run auth` builds the local client and prints a QR code only in your local terminal. Scan it using WhatsApp → Linked devices → Link a device. The command does not send messages or select groups. It creates a new protected Baileys credential subdirectory inside `.local-session/` and never deletes the prior OpenWA browser profile. `groups:select` prints group names only, accepts comma-separated indexes, asks for confirmation, and stores exact IDs without displaying them.
 
-The collector uses `OPENWA_BACKGROUND_AUTH_MODE=existing-session-only` and `OPENWA_HEADLESS=true` in the background. If authentication expires, it reports `auth_required`, creates a local desktop/persistent alert, and tells you to run `npm run auth`; it does not repeatedly open visible browsers or delete the session.
+If authentication expires, the background collector reports `auth_required`, creates a local desktop/persistent alert, and tells you to run `npm run auth`; it does not print a QR or delete credentials in the background. `OPENWA_HEADLESS`, `OPENWA_BROWSER_PATH`, and `OPENWA_CUSTOM_USER_AGENT` remain in existing `.env` files for compatibility but are no longer used by the protocol client.
 
 ## Fully local-only operation
 
@@ -121,6 +121,45 @@ npm run systemd:uninstall
 ```
 
 PM2 remains an alternative for users who already operate PM2, but do not run PM2 and systemd collectors simultaneously.
+
+## Low-memory three-hour batch mode
+
+If continuous collection consumes too much RAM, the collector can run as a scheduled local batch instead. Each batch starts the collector, waits for WhatsApp readiness (including best-effort unread replay), performs one explicit sync to the private data repository, and stops the process. The next run starts three hours later.
+
+The normal `.env` can remain local-first:
+
+```text
+LOCAL_ONLY_MODE=true
+GIT_SYNC_ENABLED=false
+```
+
+The batch script temporarily enables Git only for its explicit `npm run git:sync` child process. It does not change `.env`, and local raw files are written before syncing. If the laptop is off or WhatsApp is disconnected, messages are not guaranteed to be recovered later; unread replay is best effort.
+
+After building and installing the units, switch from continuous mode to batch mode:
+
+```bash
+npm run build
+npm run systemd:install
+systemctl --user disable --now placement-collector.service placement-collector-watchdog.timer
+systemctl --user enable --now placement-collector-batch.timer
+systemctl --user status placement-collector-batch.timer --no-pager
+```
+
+The batch journal is available with:
+
+```bash
+journalctl --user -u placement-collector-batch.service -n 100 --no-pager
+```
+
+Batch runs also write non-sensitive lifecycle information to `runtime/last-batch.json`. A batch waits for unread replay and in-flight message processing to drain, observes a quiet period, closes the protocol connection, and only then performs the explicit Git sync.
+
+To run one batch immediately:
+
+```bash
+systemctl --user start placement-collector-batch.service
+```
+
+Do not enable the continuous collector and batch timer together. The batch runner refuses to start when the collector is already active, preventing competing WhatsApp sessions.
 
 ## Notifications and persistent alerts
 
@@ -195,7 +234,7 @@ npm run watchdog:run
 npm run validate:data
 ```
 
-`doctor` checks configuration, local directory/browser usability, notification transport availability, the installed collector systemd unit, and whether the watchdog timer is installed.
+`doctor` checks configuration, local directory usability, notification transport availability, the installed collector systemd unit, and whether the watchdog timer is installed.
 
 For a daily archive:
 
@@ -208,9 +247,9 @@ CI runs formatting, type checking, linting, tests, production build, and shell s
 
 ## Troubleshooting
 
-- `auth_required`: stop the service and run `npm run auth` in a graphical desktop session, then start the service again. Run `npm run groups:select` only if group settings need changing.
-- `OpenWA session is already in use`: stop the collector and wait for the process to exit; the shared lock prevents competing browsers. Only genuinely stale locks are removed automatically.
-- Browser launch or permission errors: run `npm run doctor`. It reports a safe ownership command for the specific session/runtime/log/data directory; it never changes ownership automatically.
+- `auth_required`: stop the service and run `npm run auth` in a local terminal, then start the service again. Run `npm run groups:select` only if group settings need changing.
+- `WhatsApp session is already in use`: stop the collector and wait for the process to exit; the shared lock prevents competing clients. Only genuinely stale locks are removed automatically.
+- Permission errors: run `npm run doctor`. It reports a safe ownership command for the specific session/runtime/log/data directory; it never changes ownership automatically.
 - `offline` or `reconnecting`: the local health server remains available. The collector retries with bounded exponential backoff and jitter. The watchdog deliberately does not restart normal network-offline/auth-required states.
 - Health endpoint unreachable: the watchdog waits for three consecutive failed checks before restarting, avoiding restarts for tiny transient delays.
 - Repeated hard failures: after three watchdog restarts without a successful ready state, automatic watchdog restarts stop and a `watchdog-gave-up` critical alert is recorded.
@@ -219,4 +258,4 @@ CI runs formatting, type checking, linting, tests, production build, and shell s
 
 ## Account-risk warning
 
-OpenWA is an unofficial WhatsApp automation client. Even read-only use may carry account or service risk. Use a dedicated account where appropriate, follow WhatsApp terms, protect the local session directory, and never share QR codes or session files.
+Baileys is an unofficial WhatsApp Web protocol client. Even read-only use may carry account or service risk. Use a dedicated account where appropriate, follow WhatsApp terms, protect the local session directory, and never share QR codes or session files.

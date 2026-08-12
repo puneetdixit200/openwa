@@ -11,7 +11,7 @@ async function main() {
   const lock = await acquireSessionLock(cfg.runtimeDir, 'groups-select');
   let client: OpenWaClient | undefined;
   try {
-    client = await createOpenWa(cfg, { interactive: true });
+    client = await createOpenWa(cfg, { interactive: false, allowQr: false });
     const groups: GroupSummary[] = client.getAllGroups
       ? await client.getAllGroups(false)
       : ((await client.getAllChats?.()) ?? []).filter(

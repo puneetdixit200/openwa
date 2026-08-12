@@ -20,6 +20,11 @@ const status = (): RuntimeStatus => ({
   startedAt: Date.now(),
   activeGroupCount: 2,
   lastSafeError: null,
+  unreadReplayRunning: false,
+  unreadReplayCompletedAt: null,
+  inFlightMessages: 0,
+  lastMessageProcessedAt: null,
+  lastStorageErrorAt: null,
 });
 
 describe('health endpoints', () => {

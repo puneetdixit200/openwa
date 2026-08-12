@@ -31,6 +31,11 @@ export type RuntimeStatus = {
   startedAt: number;
   activeGroupCount: number;
   lastSafeError: string | null;
+  unreadReplayRunning: boolean;
+  unreadReplayCompletedAt: string | null;
+  inFlightMessages: number;
+  lastMessageProcessedAt: string | null;
+  lastStorageErrorAt: string | null;
 };
 
 function safeStatus(status: RuntimeStatus) {
@@ -51,6 +56,11 @@ function safeStatus(status: RuntimeStatus) {
     startedAt: status.startedAt,
     activeGroupCount: status.activeGroupCount,
     lastSafeError: status.lastSafeError,
+    unreadReplayRunning: status.unreadReplayRunning,
+    unreadReplayCompletedAt: status.unreadReplayCompletedAt,
+    inFlightMessages: status.inFlightMessages,
+    lastMessageProcessedAt: status.lastMessageProcessedAt,
+    lastStorageErrorAt: status.lastStorageErrorAt,
   };
 }
 

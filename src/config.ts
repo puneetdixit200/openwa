@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import fs from 'node:fs/promises';
-import { accessSync, constants, existsSync } from 'node:fs';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -22,12 +22,8 @@ const schema = z.object({
   OPENWA_HEADLESS: bool.default(false),
   OPENWA_QR_TIMEOUT: z.coerce.number().int().nonnegative().default(0),
   OPENWA_AUTH_TIMEOUT: z.coerce.number().int().nonnegative().default(0),
-  OPENWA_BROWSER_PATH: z
-    .string()
-    .default('')
-    .refine((value) => !value || existsSync(value), {
-      message: 'OPENWA_BROWSER_PATH does not exist; remove it to use bundled Chromium or set the exact executable path',
-    }),
+  // Retained for existing installations. The Baileys protocol client does not launch a browser.
+  OPENWA_BROWSER_PATH: z.string().default(''),
   OPENWA_CUSTOM_USER_AGENT: z
     .string()
     .default('')
@@ -64,6 +60,11 @@ const schema = z.object({
   MESSAGE_TEXT_PRIVACY_MODE: z.enum(['preserve', 'redact-phone-numbers']).default('preserve'),
   PRESERVE_DISPLAY_NAMES: bool.default(true),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  BATCH_READY_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(180),
+  BATCH_MIN_LISTEN_SECONDS: z.coerce.number().int().positive().default(60),
+  BATCH_QUIET_SECONDS: z.coerce.number().int().positive().default(90),
+  BATCH_MAX_RUNTIME_SECONDS: z.coerce.number().int().positive().default(600),
+  BATCH_SHUTDOWN_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(45),
 });
 export type Config = {
   nodeEnv: string;
@@ -105,6 +106,11 @@ export type Config = {
   reconnectJitterSeconds: number;
   backgroundAuthMode: 'existing-session-only' | 'interactive';
   localOnlyMode: boolean;
+  batchReadyTimeoutSeconds: number;
+  batchMinListenSeconds: number;
+  batchQuietSeconds: number;
+  batchMaxRuntimeSeconds: number;
+  batchShutdownTimeoutSeconds: number;
 };
 export function loadConfig(cwd = process.cwd(), requireGroups = true): Config {
   const v = schema.parse(process.env);
@@ -166,16 +172,12 @@ export function loadConfig(cwd = process.cwd(), requireGroups = true): Config {
     reconnectJitterSeconds: v.OPENWA_RECONNECT_JITTER_SECONDS,
     backgroundAuthMode: v.OPENWA_BACKGROUND_AUTH_MODE,
     localOnlyMode: v.LOCAL_ONLY_MODE,
+    batchReadyTimeoutSeconds: v.BATCH_READY_TIMEOUT_SECONDS,
+    batchMinListenSeconds: v.BATCH_MIN_LISTEN_SECONDS,
+    batchQuietSeconds: v.BATCH_QUIET_SECONDS,
+    batchMaxRuntimeSeconds: v.BATCH_MAX_RUNTIME_SECONDS,
+    batchShutdownTimeoutSeconds: v.BATCH_SHUTDOWN_TIMEOUT_SECONDS,
   };
-}
-
-export function assertConfiguredBrowserExecutable(cfg: Config) {
-  if (!cfg.browserPath) return;
-  try {
-    accessSync(cfg.browserPath, constants.X_OK);
-  } catch {
-    throw new Error(`OPENWA_BROWSER_PATH is not executable: ${cfg.browserPath}`);
-  }
 }
 
 export async function checkLocalPreflight(cfg: Config) {
@@ -195,11 +197,6 @@ export async function checkLocalPreflight(cfg: Config) {
         `${name} is not readable and writable: ${directory}. Suggested fix: sudo chown -R "$USER:$USER" ${directory}`,
       );
     }
-  }
-  try {
-    assertConfiguredBrowserExecutable(cfg);
-  } catch (error) {
-    failures.push((error as Error).message);
   }
   if (failures.length) throw new Error(failures.join('; '));
 }

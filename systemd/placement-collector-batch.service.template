@@ -1,0 +1,14 @@
+[Unit]
+Description=Placement Collector Three-Hour Batch Run
+After=default.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{REPOSITORY_PATH}}
+EnvironmentFile={{REPOSITORY_PATH}}/.env
+Environment=OPENWA_BATCH_NPM_PATH={{NPM_PATH}}
+Environment=OPENWA_BATCH_NODE_PATH={{NODE_PATH}}
+ExecStart={{REPOSITORY_PATH}}/scripts/run-collector-batch.sh
+TimeoutStartSec=30min
+TimeoutStopSec=30
+Environment=NODE_ENV=production

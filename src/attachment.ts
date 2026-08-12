@@ -31,10 +31,10 @@ export async function saveAttachment(
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       if (!cfg.downloadAttachments) return { ...base, status: 'skipped' };
-      if (!client.decryptMedia) throw new Error('OpenWA decryptMedia is unavailable');
+      if (!client.decryptMedia) throw new Error('WhatsApp media download is unavailable');
       const dataUrl = await client.decryptMedia(raw);
       const match = dataUrl.match(/^data:[^;]+;base64,(.+)$/s);
-      if (!match) throw new Error('OpenWA returned invalid media data');
+      if (!match) throw new Error('WhatsApp client returned invalid media data');
       const bytes = Buffer.from(match[1], 'base64');
       if (bytes.byteLength > cfg.maxAttachmentBytes) throw new Error('attachment exceeds configured size limit');
       const when = new Date(Number(raw.timestamp ?? Date.now()) * (Number(raw.timestamp) < 1e12 ? 1000 : 1));

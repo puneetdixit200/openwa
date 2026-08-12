@@ -110,6 +110,11 @@ export async function startCollector() {
     startedAt: Date.now(),
     activeGroupCount: cfg.groupIds.length || cfg.groupNames.length,
     lastSafeError: null,
+    unreadReplayRunning: false,
+    unreadReplayCompletedAt: null,
+    inFlightMessages: 0,
+    lastMessageProcessedAt: null,
+    lastStorageErrorAt: null,
   };
 
   const server = cfg.healthEnabled ? await startServer(cfg, status) : undefined;
@@ -119,7 +124,7 @@ export async function startCollector() {
   } catch (error) {
     status.connectionState = 'error';
     status.lastSafeError = safeErrorMessage(error);
-    log.error({ error: safeErrorMessage(error) }, 'OpenWA session is already in use');
+    log.error({ error: safeErrorMessage(error) }, 'WhatsApp session is already in use');
     notifyDesktop(cfg, 'failed');
     await closeServer(server);
     throw error;
@@ -137,8 +142,9 @@ export async function startCollector() {
     status.pendingGitFileCount = await pendingGitFileCount(cfg).catch(() => 0);
   };
 
-  const runGitSync = async () => {
-    if (gitBusy || !shouldScheduleGitSync(cfg) || !isGitSyncWindowOpen(new Date(), cfg.timezone)) return;
+  const runGitSync = async (immediate = false) => {
+    if (gitBusy || !shouldScheduleGitSync(cfg) || (!immediate && !isGitSyncWindowOpen(new Date(), cfg.timezone)))
+      return;
     gitBusy = true;
     try {
       const result = await syncGit(cfg);
@@ -176,8 +182,12 @@ export async function startCollector() {
     await writeMessage(cfg, msg, receivedDate);
     await state.add(msg.messageId);
     status.lastMessageReceivedAt = msg.receivedAt;
+    status.lastMessageProcessedAt = new Date().toISOString();
     void updatePendingGitFiles();
-    void runGitSync();
+    // Raw data is already durable at this point. Request an immediate sync for
+    // each saved message; any Git failure remains non-fatal and is retried by
+    // the periodic timer.
+    void runGitSync(true);
     log.info({ messageId: msg.messageId.slice(0, 8), type: msg.type }, 'message saved');
   };
 
@@ -198,29 +208,43 @@ export async function startCollector() {
         activeClient = client;
         status.whatsappConnected = true;
         status.listenerActive = false;
+        status.unreadReplayRunning = false;
         status.connectionState = 'connected';
         status.lastConnectedAt = new Date().toISOString();
         status.reconnectAttempt = 0;
         await client.onMessage(async (raw) => {
+          status.inFlightMessages += 1;
           try {
             await save(raw);
           } catch (error) {
             status.lastSafeError = safeErrorMessage(error);
+            status.lastStorageErrorAt = new Date().toISOString();
             notifyDesktop(cfg, 'storage-failed');
             log.error({ error: safeErrorMessage(error) }, 'message processing failed');
+          } finally {
+            status.inFlightMessages = Math.max(0, status.inFlightMessages - 1);
+            status.lastMessageProcessedAt = new Date().toISOString();
           }
         });
         status.listenerActive = true;
         log.info('WhatsApp listener active');
         if (cfg.emitUnread && client.emitUnreadMessages) {
           status.connectionState = 'replaying_unread';
+          status.unreadReplayRunning = true;
           try {
             await client.emitUnreadMessages();
+            const drainDeadline = Date.now() + 30_000;
+            while (status.inFlightMessages > 0 && Date.now() < drainDeadline)
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            if (status.inFlightMessages > 0) throw new Error('unread replay processing did not drain before timeout');
+            status.unreadReplayCompletedAt = new Date().toISOString();
           } catch (error) {
             status.lastSafeError = safeErrorMessage(error);
+            status.lastStorageErrorAt = new Date().toISOString();
             notifyDesktop(cfg, 'replay-failed');
             log.error({ error: safeErrorMessage(error) }, 'unread replay failed; live listener remains active');
           }
+          status.unreadReplayRunning = false;
           status.connectionState = 'connected';
         }
         if (lastConnectionAlert) {
@@ -236,6 +260,7 @@ export async function startCollector() {
         activeClient = undefined;
         status.whatsappConnected = false;
         status.listenerActive = false;
+        status.unreadReplayRunning = false;
         status.lastDisconnectedAt = new Date().toISOString();
         if (isAuthRequiredError(error)) {
           status.connectionState = 'auth_required';

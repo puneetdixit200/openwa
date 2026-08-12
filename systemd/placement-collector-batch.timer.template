@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Placement Collector Every Three Hours
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=3h
+Persistent=true
+AccuracySec=1min
+Unit=placement-collector-batch.service
+
+[Install]
+WantedBy=timers.target

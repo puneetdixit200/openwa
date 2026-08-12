@@ -11,8 +11,10 @@ target="$unit_dir/placement-collector.service"
 failure_target="$unit_dir/placement-collector-failure.service"
 watchdog_target="$unit_dir/placement-collector-watchdog.service"
 watchdog_timer="$unit_dir/placement-collector-watchdog.timer"
+batch_target="$unit_dir/placement-collector-batch.service"
+batch_timer="$unit_dir/placement-collector-batch.timer"
 
-if [[ ! -e "$target" && ! -e "$watchdog_timer" ]]; then
+if [[ ! -e "$target" && ! -e "$watchdog_timer" && ! -e "$batch_timer" ]]; then
   echo "No placement-collector user units found."
   exit 0
 fi
@@ -20,7 +22,9 @@ fi
 systemctl --user disable --now placement-collector-watchdog.timer 2>/dev/null || true
 systemctl --user stop placement-collector-watchdog.service 2>/dev/null || true
 systemctl --user disable --now placement-collector.service 2>/dev/null || true
-rm -f "$target" "$failure_target" "$watchdog_target" "$watchdog_timer"
+systemctl --user disable --now placement-collector-batch.timer 2>/dev/null || true
+systemctl --user stop placement-collector-batch.service 2>/dev/null || true
+rm -f "$target" "$failure_target" "$watchdog_target" "$watchdog_timer" "$batch_target" "$batch_timer"
 systemctl --user daemon-reload
 systemctl --user reset-failed placement-collector.service 2>/dev/null || true
 echo "Removed placement collector and watchdog user units."

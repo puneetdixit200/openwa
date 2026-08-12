@@ -1,4 +1,4 @@
-import { createOpenWa, type OpenWaClient } from '../openwa.js';
+import { createOpenWa, isAuthRequiredError, quarantineBaileysAuthState, type OpenWaClient } from '../openwa.js';
 import { checkLocalPreflight, loadConfig, prepareLocalDirectories } from '../config.js';
 import { acquireSessionLock } from '../session-lock.js';
 import { assertBackgroundCollectorStopped } from './common.js';
@@ -6,8 +6,6 @@ import { safeErrorMessage } from '../utils.js';
 
 async function main() {
   if (process.getuid?.() === 0) throw new Error('run npm run auth as your normal desktop user, not root');
-  if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY)
-    throw new Error('a graphical desktop session is required for QR authentication');
   await assertBackgroundCollectorStopped();
   const cfg = loadConfig(process.cwd(), false);
   await prepareLocalDirectories(cfg);
@@ -15,8 +13,15 @@ async function main() {
   const lock = await acquireSessionLock(cfg.runtimeDir, 'auth');
   let client: OpenWaClient | undefined;
   try {
-    console.log('Starting interactive WhatsApp authentication. Scan the QR locally if shown.');
-    client = await createOpenWa(cfg, { interactive: true });
+    console.log('Starting WhatsApp authentication. Scan the QR shown in this terminal if prompted.');
+    try {
+      client = await createOpenWa(cfg, { interactive: true, allowQr: true });
+    } catch (error) {
+      if (!isAuthRequiredError(error)) throw error;
+      await quarantineBaileysAuthState(cfg);
+      console.log('The previous incomplete pairing was preserved locally. Generating a fresh QR.');
+      client = await createOpenWa(cfg, { interactive: true, allowQr: true });
+    }
     console.log('WhatsApp authentication succeeded.');
   } finally {
     await client?.close?.().catch(() => {});
