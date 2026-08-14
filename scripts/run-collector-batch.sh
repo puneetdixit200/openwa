@@ -126,4 +126,4 @@ if ! GIT_SYNC_ENABLED=true LOCAL_ONLY_MODE=false "$npm_path" run git:sync; then
   exit 1
 fi
 sync_completed=1
-echo "batch sync complete; stopping collector until the next scheduled run"
+echo "batch sync complete and remote verified; stopping collector until the next scheduled run"

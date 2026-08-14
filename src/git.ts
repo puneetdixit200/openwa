@@ -26,6 +26,17 @@ function forbidden(file: string) {
     file,
   );
 }
+
+async function remoteBranchHead(cfg: Config) {
+  const output = await runGit(cfg.dataRepoPath, ['ls-remote', '--heads', cfg.gitRemote, `refs/heads/${cfg.gitBranch}`]);
+  return output.split(/\s+/)[0] || null;
+}
+
+function rejectForbiddenFiles(files: string[], context: string) {
+  const unsafe = files.find(forbidden);
+  if (unsafe) throw new Error(`refusing ${context} containing forbidden file: ${unsafe}`);
+}
+
 export async function syncGit(cfg: Config) {
   if (!cfg.gitSyncEnabled) return { status: 'disabled' };
   const lock = path.join(cfg.runtimeDir, 'locks', 'git-sync.lock');
@@ -40,27 +51,25 @@ export async function syncGit(cfg: Config) {
       throw new Error(
         `refusing unsafe staged file: ${staged.find((file) => !file.startsWith('incoming/') || forbidden(file))}`,
       );
-    if (!staged.length) return { status: 'no-changes' };
-    const dates = staged
-      .map((file) => file.match(/^incoming\/(\d{4}-\d{2}-\d{2})/)?.[1])
-      .filter((x): x is string => Boolean(x));
-    const through = dates.sort().at(-1) ?? 'today';
-    await runGit(cfg.dataRepoPath, [
-      '-c',
-      `user.name=${cfg.gitAuthorName}`,
-      '-c',
-      `user.email=${cfg.gitAuthorEmail}`,
-      'commit',
-      '-m',
-      `data: sync placement messages through ${through}`,
-    ]);
-    await runGit(cfg.dataRepoPath, ['fetch', cfg.gitRemote]);
-    let remoteHasBranch = true;
-    try {
-      await runGit(cfg.dataRepoPath, ['ls-remote', '--exit-code', '--heads', cfg.gitRemote, cfg.gitBranch]);
-    } catch {
-      remoteHasBranch = false;
+    if (staged.length) {
+      const dates = staged
+        .map((file) => file.match(/^incoming\/(\d{4}-\d{2}-\d{2})/)?.[1])
+        .filter((x): x is string => Boolean(x));
+      const through = dates.sort().at(-1) ?? 'today';
+      await runGit(cfg.dataRepoPath, [
+        '-c',
+        `user.name=${cfg.gitAuthorName}`,
+        '-c',
+        `user.email=${cfg.gitAuthorEmail}`,
+        'commit',
+        '-m',
+        `data: sync placement messages through ${through}`,
+      ]);
     }
+
+    await runGit(cfg.dataRepoPath, ['fetch', cfg.gitRemote]);
+    const remoteHeadBefore = await remoteBranchHead(cfg);
+    const remoteHasBranch = remoteHeadBefore !== null;
     if (remoteHasBranch)
       try {
         await runGit(cfg.dataRepoPath, ['pull', '--rebase', cfg.gitRemote, cfg.gitBranch]);
@@ -68,8 +77,28 @@ export async function syncGit(cfg: Config) {
         await runGit(cfg.dataRepoPath, ['rebase', '--abort']).catch(() => {});
         throw new Error(`safe rebase failed; resolve conflicts in ${cfg.dataRepoPath}: ${(e as Error).message}`);
       }
-    await runGit(cfg.dataRepoPath, ['push', cfg.gitRemote, `HEAD:${cfg.gitBranch}`]);
-    return { status: 'success', files: staged };
+
+    const localHead = await runGit(cfg.dataRepoPath, ['rev-parse', 'HEAD']);
+    if (remoteHasBranch) {
+      const pendingFiles = (
+        await runGit(cfg.dataRepoPath, ['diff', '--name-only', `${cfg.gitRemote}/${cfg.gitBranch}..HEAD`])
+      )
+        .split('\n')
+        .filter(Boolean);
+      rejectForbiddenFiles(pendingFiles, 'push');
+    } else {
+      const trackedFiles = (await runGit(cfg.dataRepoPath, ['ls-files'])).split('\n').filter(Boolean);
+      rejectForbiddenFiles(trackedFiles, 'initial push');
+    }
+
+    const pushNeeded = remoteHeadBefore !== localHead;
+    if (pushNeeded) await runGit(cfg.dataRepoPath, ['push', cfg.gitRemote, `HEAD:${cfg.gitBranch}`]);
+
+    const verifiedRemoteHead = await remoteBranchHead(cfg);
+    if (verifiedRemoteHead !== localHead)
+      throw new Error(`push verification failed: ${cfg.gitRemote}/${cfg.gitBranch} does not match local HEAD`);
+
+    return { status: staged.length || pushNeeded ? 'success' : 'no-changes', files: staged };
   } finally {
     await handle?.close().catch(() => {});
     await fs.unlink(lock).catch(() => {});

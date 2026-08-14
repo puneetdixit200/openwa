@@ -41,4 +41,27 @@ describe('private data git sync', () => {
     await fs.writeFile(path.join(root, 'runtime', 'locks', 'git-sync.lock'), 'busy');
     await expect(syncGit(config(root, repo))).rejects.toThrow();
   });
+
+  it('pushes an existing local commit even when there are no staged changes', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'openwa-pending-push-'));
+    const repo = path.join(root, 'data');
+    const remote = path.join(root, 'remote.git');
+    await fs.mkdir(repo);
+    await git(repo, ['init', '-b', 'main']);
+    await git(root, ['init', '--bare', remote]);
+    await git(repo, ['remote', 'add', 'origin', remote]);
+    await fs.mkdir(path.join(repo, 'incoming', '2026-08-14'), { recursive: true });
+    await fs.writeFile(path.join(repo, 'incoming', '2026-08-14', 'messages.jsonl'), 'first\n');
+    await syncGit(config(root, repo));
+
+    await fs.writeFile(path.join(repo, 'incoming', '2026-08-14', 'messages.jsonl'), 'first\nsecond\n');
+    await git(repo, ['add', '--', 'incoming/']);
+    await git(repo, ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'local only']);
+
+    expect((await git(repo, ['status', '--short'])).stdout.trim()).toBe('');
+    expect((await syncGit(config(root, repo))).status).toBe('success');
+    expect((await git(repo, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(
+      (await git(remote, ['rev-parse', 'main'])).stdout.trim(),
+    );
+  });
 });
