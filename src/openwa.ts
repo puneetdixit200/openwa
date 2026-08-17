@@ -225,12 +225,17 @@ function safeBaileysLogger() {
   return pino({ level: 'silent' });
 }
 
-async function secureAuthDirectory(directory: string) {
+export async function secureAuthDirectory(directory: string) {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   await fs.chmod(directory, 0o700);
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
     const target = path.join(directory, entry.name);
-    await fs.chmod(target, entry.isDirectory() ? 0o700 : 0o600);
+    try {
+      await fs.chmod(target, entry.isDirectory() ? 0o700 : 0o600);
+    } catch (error) {
+      // Baileys can replace credential files between readdir and chmod.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 }
 
@@ -321,8 +326,12 @@ async function createBaileysClient(cfg: Config, options: OpenWaLaunchOptions): P
     return [...groupNames.entries()].map(([id, name]) => ({ id, name, isGroup: true }));
   };
 
+  let credentialWrite = Promise.resolve();
   socket.ev.on('creds.update', () => {
-    void saveCreds().then(() => secureAuthDirectory(authDirectory));
+    credentialWrite = credentialWrite
+      .then(saveCreds)
+      .then(() => secureAuthDirectory(authDirectory))
+      .catch(() => console.error('Unable to persist WhatsApp session credentials; retrying on the next update.'));
   });
   socket.ev.on('messages.upsert', ({ messages }) => {
     for (const native of messages) {

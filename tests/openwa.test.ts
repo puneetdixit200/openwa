@@ -1,8 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, vi } from 'vitest';
 import {
   allowedMessage,
   isAuthRequiredError,
   normalise,
+  secureAuthDirectory,
   shouldIgnoreMessage,
   toIncomingMessage,
 } from '../src/openwa.js';
@@ -47,5 +51,21 @@ describe('message boundary', () => {
     expect(isAuthRequiredError(new Error('Session most likely logged out'))).toBe(true);
     expect(isAuthRequiredError({ output: { statusCode: 401 } })).toBe(true);
     expect(isAuthRequiredError(new Error('network timeout'))).toBe(false);
+  });
+  it('keeps securing credentials when Baileys removes a file during the permission pass', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'openwa-auth-'));
+    const file = path.join(directory, 'credential.json');
+    const chmod = fs.chmod.bind(fs);
+    await fs.writeFile(file, 'test');
+    const spy = vi.spyOn(fs, 'chmod').mockImplementation(async (target, mode) => {
+      if (target === file) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      return chmod(target, mode);
+    });
+    try {
+      await expect(secureAuthDirectory(directory)).resolves.toBeUndefined();
+    } finally {
+      spy.mockRestore();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
 });
