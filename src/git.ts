@@ -22,8 +22,10 @@ export async function gitCheck(cfg: Config) {
   return { repo, remoteUrl, branch };
 }
 function forbidden(file: string) {
-  return /(^|\/)(\.env|\.local-session|runtime|logs|node_modules|tokens|credentials|session-data)(\/|$)|(^|\/)\.(.*token|.*secret)/i.test(
-    file,
+  return (
+    /(^|\/)(\.env|\.local-session|runtime|logs|node_modules|tokens|credentials|session-data)(\/|$)|(^|\/)\.(.*token|.*secret)/i.test(
+      file,
+    ) || /(^|\/)[^/]+\.tmp$/i.test(file)
   );
 }
 
@@ -45,7 +47,7 @@ export async function syncGit(cfg: Config) {
   try {
     handle = await fs.open(lock, 'wx');
     await gitCheck(cfg);
-    await runGit(cfg.dataRepoPath, ['add', '--', 'incoming/']);
+    await runGit(cfg.dataRepoPath, ['add', '--', 'incoming/', ':(exclude,glob)incoming/**/*.tmp']);
     const staged = (await runGit(cfg.dataRepoPath, ['diff', '--cached', '--name-only'])).split('\n').filter(Boolean);
     if (staged.some((file) => !file.startsWith('incoming/') || forbidden(file)))
       throw new Error(

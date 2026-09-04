@@ -64,4 +64,24 @@ describe('private data git sync', () => {
       (await git(remote, ['rev-parse', 'main'])).stdout.trim(),
     );
   });
+
+  it('never stages or pushes atomic temporary files', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'openwa-temp-file-'));
+    const repo = path.join(root, 'data');
+    const remote = path.join(root, 'remote.git');
+    await fs.mkdir(repo);
+    await git(repo, ['init', '-b', 'main']);
+    await git(root, ['init', '--bare', remote]);
+    await git(repo, ['remote', 'add', 'origin', remote]);
+    const day = path.join(repo, 'incoming', '2026-09-04');
+    await fs.mkdir(day, { recursive: true });
+    await fs.writeFile(path.join(day, 'messages.jsonl'), 'safe\n');
+    await fs.writeFile(path.join(day, 'manifest.json.1234.abcd.tmp'), 'temporary\n');
+
+    await syncGit(config(root, repo));
+
+    const remoteFiles = (await git(remote, ['ls-tree', '-r', '--name-only', 'main'])).stdout;
+    expect(remoteFiles).toContain('incoming/2026-09-04/messages.jsonl');
+    expect(remoteFiles).not.toContain('.tmp');
+  });
 });

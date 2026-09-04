@@ -17,7 +17,7 @@ async function main() {
     await runGit(destination, ['init', '-b', 'main']);
   }
   await fs.mkdir(path.join(destination, 'incoming'), { recursive: true });
-  await fs.writeFile(path.join(destination, '.gitignore'), 'runtime/\nlogs/\n.env\n.local-session/\n*.log\n');
+  await fs.writeFile(path.join(destination, '.gitignore'), 'runtime/\nlogs/\n.env\n.local-session/\n*.log\n*.tmp\n');
   await fs.writeFile(
     path.join(destination, 'README.md'),
     '# Private placement raw data\n\nThis repository contains sensitive WhatsApp placement data. Keep it private.\n',
