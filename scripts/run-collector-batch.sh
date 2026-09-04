@@ -5,6 +5,7 @@ repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 service=placement-collector.service
 started_by_batch=0
 sync_completed=0
+batch_marker_created=0
 ready_observed=0
 replay_completed=0
 batch_result=failed
@@ -17,6 +18,9 @@ notify() {
 
 cleanup() {
   local exit_code=$?
+  if (( batch_marker_created == 1 )); then
+    rm -f "$repo_dir/runtime/locks/batch-mode.lock"
+  fi
   if (( started_by_batch == 1 )); then
     systemctl --user stop "$service" >/dev/null 2>&1 || true
   fi
@@ -56,6 +60,23 @@ if [[ ! "$timeout_seconds" =~ ^[1-9][0-9]*$ || ! "$min_listen_seconds" =~ ^[1-9]
 fi
 
 notify batch-started
+mkdir -p "$repo_dir/runtime/locks"
+batch_marker="$repo_dir/runtime/locks/batch-mode.lock"
+if ! (set -o noclobber; printf '%s\n' "$$" > "$batch_marker") 2>/dev/null; then
+  marker_pid=$(<"$batch_marker")
+  if [[ "$marker_pid" =~ ^[0-9]+$ ]] && kill -0 "$marker_pid" 2>/dev/null; then
+    echo "batch run refused: another batch is already active" >&2
+    notify batch-failed
+    exit 1
+  fi
+  rm -f "$batch_marker"
+  if ! (set -o noclobber; printf '%s\n' "$$" > "$batch_marker") 2>/dev/null; then
+    echo "batch run refused: could not acquire batch-mode lock" >&2
+    notify batch-failed
+    exit 1
+  fi
+fi
+batch_marker_created=1
 systemctl --user start "$service"
 started_by_batch=1
 

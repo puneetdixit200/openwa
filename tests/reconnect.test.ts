@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isGitSyncWindowOpen, reconnectDelaySeconds, shouldScheduleGitSync } from '../src/index.js';
+import { isBatchMode, isGitSyncWindowOpen, reconnectDelaySeconds, shouldScheduleGitSync } from '../src/index.js';
 import type { Config } from '../src/config.js';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const cfg = {
   reconnectInitialSeconds: 30,
@@ -25,5 +28,12 @@ describe('reconnect backoff', () => {
     expect(isGitSyncWindowOpen(new Date('2026-08-06T01:30:00.000Z'), 'Asia/Kolkata')).toBe(true);
     expect(isGitSyncWindowOpen(new Date('2026-08-06T17:29:00.000Z'), 'Asia/Kolkata')).toBe(true);
     expect(isGitSyncWindowOpen(new Date('2026-08-06T17:30:00.000Z'), 'Asia/Kolkata')).toBe(false);
+  });
+  it('detects batch mode from its runtime marker', async () => {
+    const runtime = await fs.mkdtemp(path.join(os.tmpdir(), 'openwa-batch-'));
+    expect(isBatchMode(runtime)).toBe(false);
+    await fs.mkdir(path.join(runtime, 'locks'));
+    await fs.writeFile(path.join(runtime, 'locks', 'batch-mode.lock'), '123');
+    expect(isBatchMode(runtime)).toBe(true);
   });
 });

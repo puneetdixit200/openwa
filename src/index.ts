@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import pino from 'pino';
 import { loadConfig, prepareLocalDirectories, checkLocalPreflight } from './config.js';
@@ -34,6 +35,10 @@ export function reconnectDelaySeconds(cfg: Config, attempt: number, random = Mat
 
 export function shouldScheduleGitSync(cfg: Config) {
   return cfg.gitSyncEnabled && !cfg.localOnlyMode;
+}
+
+export function isBatchMode(runtimeDir: string) {
+  return existsSync(path.join(runtimeDir, 'locks', 'batch-mode.lock'));
 }
 
 export function isGitSyncWindowOpen(date: Date, timezone: string) {
@@ -132,6 +137,7 @@ export async function startCollector() {
 
   let activeClient: OpenWaClient | undefined;
   let stopping = false;
+  const batchMode = isBatchMode(cfg.runtimeDir);
   let gitTimer: NodeJS.Timeout | undefined;
   let gitBusy = false;
   let lastConnectionAlert: ConnectionAlert = null;
@@ -143,7 +149,12 @@ export async function startCollector() {
   };
 
   const runGitSync = async (immediate = false) => {
-    if (gitBusy || !shouldScheduleGitSync(cfg) || (!immediate && !isGitSyncWindowOpen(new Date(), cfg.timezone)))
+    if (
+      batchMode ||
+      gitBusy ||
+      !shouldScheduleGitSync(cfg) ||
+      (!immediate && !isGitSyncWindowOpen(new Date(), cfg.timezone))
+    )
       return;
     gitBusy = true;
     try {
@@ -191,7 +202,7 @@ export async function startCollector() {
     log.info({ messageId: msg.messageId.slice(0, 8), type: msg.type }, 'message saved');
   };
 
-  if (shouldScheduleGitSync(cfg)) {
+  if (shouldScheduleGitSync(cfg) && !batchMode) {
     if (isGitSyncWindowOpen(new Date(), cfg.timezone)) void runGitSync();
     gitTimer = setInterval(() => void runGitSync(), cfg.gitIntervalMinutes * 60_000);
     gitTimer.unref?.();
