@@ -8,6 +8,10 @@ WorkingDirectory={{REPOSITORY_PATH}}
 EnvironmentFile={{REPOSITORY_PATH}}/.env
 Environment=OPENWA_BATCH_NPM_PATH={{NPM_PATH}}
 Environment=OPENWA_BATCH_NODE_PATH={{NODE_PATH}}
+Environment=GH_CONFIG_DIR=%h/.config/gh
+Environment=GIT_CONFIG_COUNT=1
+Environment=GIT_CONFIG_KEY_0=credential.helper
+Environment="GIT_CONFIG_VALUE_0=!/usr/bin/gh auth git-credential"
 ExecStart={{REPOSITORY_PATH}}/scripts/run-collector-batch.sh
 TimeoutStartSec=30min
 TimeoutStopSec=30
